@@ -53,11 +53,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         if (active) setBranchesLoading(false);
       });
 
-    inventoryService.getInventorySummary(branchId)
-      .then((summ) => {
-        if (active) setInvSummary(summ);
-      })
-      .catch((err) => console.error('Error loading inventory summary on dashboard:', err));
+    if (profile.role !== 'MAIN_BRANCH_EMPLOYEE') {
+      inventoryService.getInventorySummary(branchId)
+        .then((summ) => {
+          if (active) setInvSummary(summ);
+        })
+        .catch((err) => console.error('Error loading inventory summary on dashboard:', err));
+    }
 
     return () => {
       active = false;
@@ -79,7 +81,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           </h2>
           <p className="text-sm text-slate-600 mt-1">
             {isOwner && 'System-wide operational summary across all Brownie Point branches.'}
-            {isMainEmployee && 'Central inventory dispatch and sub-branch order oversight.'}
+            {isMainEmployee && 'Main Branch sales and sub-branch order oversight.'}
             {isBranchEmployee && (assignedBranch ? `Operational control center for ${assignedBranch.name} (${assignedBranch.branch_code}).` : 'Branch sales and stock management console.')}
           </p>
         </div>
@@ -184,7 +186,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
       {/* MAIN BRANCH EMPLOYEE METRICS */}
       {isMainEmployee && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <Card className="p-4 flex items-center space-x-3">
             <div className="p-3 bg-brand-100 text-brand-800 rounded-xl">
               <GitBranch className="w-5 h-5" />
@@ -215,25 +217,6 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             </div>
           </Card>
 
-          <Card className="p-4 flex items-center space-x-3">
-            <div className="p-3 bg-emerald-100 text-emerald-800 rounded-xl">
-              <PackageCheck className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-xs text-slate-500 font-medium">Moodubidre Stock Qty</p>
-              <p className="text-xl font-bold text-slate-900">{invSummary.totalAvailableQuantity}</p>
-            </div>
-          </Card>
-
-          <Card className="p-4 flex items-center space-x-3">
-            <div className="p-3 bg-purple-100 text-purple-800 rounded-xl">
-              <Clock className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-xs text-slate-500 font-medium">Expiring Products (≤3d)</p>
-              <p className="text-xl font-bold text-slate-900">{invSummary.expiringSoon}</p>
-            </div>
-          </Card>
         </div>
       )}
 
@@ -313,7 +296,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           >
             <PackageCheck className="w-4 h-4 text-brand-700 shrink-0" />
             <span className="text-sm font-medium text-slate-800">
-              {isBranchEmployee ? 'My Inventory' : 'Inventory'}
+            {isBranchEmployee ? 'My Inventory' : 'Inventory'}
             </span>
           </button>
 

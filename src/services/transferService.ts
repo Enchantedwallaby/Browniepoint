@@ -12,6 +12,7 @@ export interface CreateTransferItemParam {
 export interface CreateTransferParams {
   source_branch_id: string;
   destination_branch_id: string;
+  source_is_main?: boolean;
   notes?: string;
   dispatched_by?: string;
   items: CreateTransferItemParam[];
@@ -95,10 +96,13 @@ export const transferService = {
       })),
     };
 
-    const { data: transferId, error } = await supabase.rpc('create_stock_transfer', payload);
+    const rpcName = params.source_is_main
+      ? 'create_main_branch_stock_transfer'
+      : 'create_stock_transfer';
+    const { data: transferId, error } = await supabase.rpc(rpcName, payload);
 
     if (error) {
-      console.error('RPC create_stock_transfer error:', error);
+      console.error(`RPC ${rpcName} error:`, error);
       throw new Error(
         error.message || 'Failed to dispatch stock transfer via atomic PostgreSQL RPC.'
       );

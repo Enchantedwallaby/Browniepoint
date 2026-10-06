@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { CustomerReceipt } from '@/components/receipt/CustomerReceipt';
@@ -54,11 +54,24 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
   const [selectedBranchId, setSelectedBranchId] = useState<string>(
     isBranchEmployee && assignedBranch ? assignedBranch.id : assignedBranch?.id || ''
   );
+  const effectiveBranchId = isOwner ? selectedBranchId : assignedBranch?.id ?? '';
+  const activeSaleBranch =
+    assignedBranch?.id === effectiveBranchId
+      ? assignedBranch
+      : branches.find((branch) => branch.id === effectiveBranchId) ?? null;
+  const isSaleBranchResolved = Boolean(effectiveBranchId && activeSaleBranch);
+  const isMainBranchSale =
+    isSaleBranchResolved && activeSaleBranch?.branch_type === 'MAIN';
+  const catalogueScope = `${profile.id}:${effectiveBranchId}`;
 
   // Products & Inventory state
   const [products, setProducts] = useState<ProductWithVariants[]>([]);
   const [fefoRecords, setFefoRecords] = useState<FEFOInventoryRecord[]>([]);
   const [loadingCatalogue, setLoadingCatalogue] = useState(false);
+  const [loadedCatalogueScope, setLoadedCatalogueScope] = useState<string | null>(null);
+  const [catalogueError, setCatalogueError] = useState<string | null>(null);
+  const [catalogueErrorScope, setCatalogueErrorScope] = useState<string | null>(null);
+  const catalogueRequestId = useRef(0);
 
   // POS State
   const [searchQuery, setSearchQuery] = useState('');
@@ -77,6 +90,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
 
   // History State
   const [salesHistory, setSalesHistory] = useState<SaleDetailed[]>([]);
+  const salesHistoryRequestId = useRef(0);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [historyFilterPayment, setHistoryFilterPayment] = useState<string>('ALL');
   const [historyFilterStatus, setHistoryFilterStatus] = useState<string>('ALL');
@@ -98,6 +112,30 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    setSelectedBranchId(assignedBranch?.id ?? '');
+  }, [profile.id, assignedBranch?.id]);
+
+  useEffect(() => {
+    setProducts([]);
+    setFefoRecords([]);
+    setLoadedCatalogueScope(null);
+    setCatalogueError(null);
+    setCatalogueErrorScope(null);
+    setSalesHistory([]);
+    setSelectedSaleDetail(null);
+    setRecentCompletedSale(null);
+    setCart([]);
+    setDiscountInput('0');
+    setAmountCash('');
+    setAmountOnline('');
+    setCashReceived('');
+    setCustomerName('');
+    setSaleNotes('');
+    setCheckoutError(null);
+    setPrintNotice(null);
+  }, [profile.id, effectiveBranchId]);
 
   // Direct ESC/POS Thermal Print Action via QZ Tray
   const handleDirectThermalPrint = async (saleToPrint?: SaleDetailed | null) => {
@@ -134,47 +172,84 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
     loadBranches();
   }, []);
 
-  // 2. Fetch Products & Inventory Stock when selectedBranchId changes
+  // 2. Fetch Products & Inventory Stock for the confirmed user/branch scope
   const loadCatalogueAndStock = useCallback(async () => {
-    if (!selectedBranchId) return;
+    const requestId = ++catalogueRequestId.current;
+    setProducts([]);
+    setFefoRecords([]);
+    setLoadedCatalogueScope(null);
+    setCatalogueError(null);
+    setCatalogueErrorScope(null);
+    if (!effectiveBranchId || !isSaleBranchResolved) {
+      setLoadingCatalogue(false);
+      return;
+    }
+
     setLoadingCatalogue(true);
     try {
       const [prodsData, stockData] = await Promise.all([
         productService.getActiveProducts(),
-        inventoryService.getFEFOInventory(selectedBranchId),
+        isMainBranchSale
+          ? Promise.resolve([])
+          : inventoryService.getFEFOInventory(effectiveBranchId),
       ]);
+      if (requestId !== catalogueRequestId.current) return;
       setProducts(prodsData);
       setFefoRecords(stockData);
+      setLoadedCatalogueScope(catalogueScope);
     } catch (err) {
       console.error('Failed to load catalogue or stock:', err);
+      if (requestId === catalogueRequestId.current) {
+        setCatalogueError(
+          err instanceof Error ? err.message : 'Failed to load products and inventory.'
+        );
+        setCatalogueErrorScope(catalogueScope);
+      }
     } finally {
-      setLoadingCatalogue(false);
+      if (requestId === catalogueRequestId.current) {
+        setLoadingCatalogue(false);
+      }
     }
-  }, [selectedBranchId]);
+  }, [
+    effectiveBranchId,
+    isSaleBranchResolved,
+    isMainBranchSale,
+    catalogueScope,
+  ]);
 
   useEffect(() => {
-    loadCatalogueAndStock();
+    void loadCatalogueAndStock();
+    return () => {
+      catalogueRequestId.current += 1;
+    };
   }, [loadCatalogueAndStock]);
 
   // 3. Load Sales History
   const loadSalesHistory = useCallback(async () => {
+    const requestId = ++salesHistoryRequestId.current;
     setLoadingHistory(true);
     try {
       const history = await salesService.getSalesHistory({
-        branchId: isOwner ? (selectedBranchId || undefined) : selectedBranchId,
+        branchId: isOwner ? (effectiveBranchId || undefined) : effectiveBranchId,
         limit: 100,
       });
+      if (requestId !== salesHistoryRequestId.current) return;
       setSalesHistory(history);
     } catch (err) {
       console.error('Failed to load sales history:', err);
     } finally {
-      setLoadingHistory(false);
+      if (requestId === salesHistoryRequestId.current) {
+        setLoadingHistory(false);
+      }
     }
-  }, [selectedBranchId, isOwner]);
+  }, [effectiveBranchId, isOwner]);
 
   useEffect(() => {
     if (activeTab === 'history') {
-      loadSalesHistory();
+      void loadSalesHistory();
+      return () => {
+        salesHistoryRequestId.current += 1;
+      };
     }
   }, [activeTab, loadSalesHistory]);
 
@@ -194,6 +269,8 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
     products.forEach((p) => cats.add(p.category));
     return ['All', ...Array.from(cats).sort()];
   }, [products]);
+  const catalogueReady =
+    isSaleBranchResolved && loadedCatalogueScope === catalogueScope;
 
   // Filtered Products for POS
   const filteredProducts = useMemo(() => {
@@ -230,7 +307,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
     if (existingIndex > -1) {
       // Increase quantity if stock permits
       const item = cart[existingIndex];
-      if (!isCustom && item.quantity + 1 > availableStock) {
+      if (!isMainBranchSale && !isCustom && item.quantity + 1 > availableStock) {
         setCheckoutError(`Cannot add more. Only ${availableStock} units available in stock.`);
         return;
       }
@@ -242,7 +319,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
       setCart(updated);
     } else {
       // Check initial stock availability for standard items
-      if (!isCustom && availableStock <= 0) {
+      if (!isMainBranchSale && !isCustom && availableStock <= 0) {
         setCheckoutError(`"${product.name} - ${variant.name}" is currently out of stock.`);
         return;
       }
@@ -257,7 +334,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
           quantity: 1,
           unit_price: basePrice,
           is_custom_price: isCustom,
-          available_stock: availableStock,
+          available_stock: isMainBranchSale ? Number.POSITIVE_INFINITY : availableStock,
           is_custom_cake_product: product.name === 'Custom Cake',
         },
       ]);
@@ -272,7 +349,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
           if (item.product_variant_id === variantId) {
             const newQty = item.quantity + delta;
             if (newQty <= 0) return null;
-            if (!item.is_custom_price && newQty > item.available_stock) {
+            if (!isMainBranchSale && !item.is_custom_price && newQty > item.available_stock) {
               setCheckoutError(`Stock limit reached (${item.available_stock} units available).`);
               return item;
             }
@@ -324,7 +401,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
   const handleCheckout = async () => {
     setCheckoutError(null);
 
-    if (!selectedBranchId) {
+    if (!effectiveBranchId || !isSaleBranchResolved || !catalogueReady) {
       setCheckoutError('Please select a branch before completing the sale.');
       return;
     }
@@ -361,7 +438,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
 
     try {
       const completed = await salesService.createSale({
-        branch_id: selectedBranchId,
+        branch_id: effectiveBranchId,
         payment_method: paymentMethod,
         discount_amount: discountAmount,
         amount_cash: paymentMethod === 'CASH' ? finalTotal : paymentMethod === 'MIXED' ? mixedCashVal : 0,
@@ -445,7 +522,9 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
   }, [filteredHistory]);
 
   const selectedBranchName =
-    branches.find((b) => b.id === selectedBranchId)?.name || 'Assigned Branch';
+    activeSaleBranch?.name || 'Assigned Branch';
+  const currentCatalogueError =
+    catalogueErrorScope === catalogueScope ? catalogueError : null;
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
@@ -601,10 +680,14 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
             </div>
 
             {/* Product Cards Grid */}
-            {loadingCatalogue ? (
+            {loadingCatalogue || !isSaleBranchResolved || (!catalogueReady && !currentCatalogueError) ? (
               <div className="bg-white p-12 rounded-xl border border-slate-200 text-center space-y-3">
                 <RefreshCw className="w-8 h-8 text-brand-700 animate-spin mx-auto" />
                 <p className="text-sm text-slate-600 font-medium">Loading products and FEFO inventory...</p>
+              </div>
+            ) : currentCatalogueError ? (
+              <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl text-sm text-rose-800">
+                Failed to load products and inventory: {currentCatalogueError}
               </div>
             ) : filteredProducts.length === 0 ? (
               <div className="bg-white p-12 rounded-xl border border-dashed border-slate-300 text-center space-y-2">
@@ -645,7 +728,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
                         const price = activeRule?.base_price;
                         const hasPrice = price != null;
                         const isNoSellingPrice = !isCustom && !hasPrice;
-                        const isOutOfStock = !isCustom && stockAvailable <= 0;
+                        const isOutOfStock = !isMainBranchSale && !isCustom && stockAvailable <= 0;
 
                         return (
                           <div
@@ -668,7 +751,11 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
                                     </span>
                                   )}
                                 </span>
-                                {!isCustom && (
+                                {isMainBranchSale ? (
+                                  <span className="text-[10px] font-medium text-emerald-700">
+                                    No stock balance required
+                                  </span>
+                                ) : !isCustom && (
                                   <span
                                     className={`text-[10px] font-medium ${
                                       stockAvailable > 5

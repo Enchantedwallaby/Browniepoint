@@ -36,7 +36,7 @@ interface DispatchCartItem extends CreateTransferItemParam {
   product_id: string;
   product_name: string;
   variant_name: string;
-  available_stock: number;
+  available_stock: number | null;
 }
 
 export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedBranch }) => {
@@ -58,6 +58,7 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
 
   // Dispatch Form State
   const [sourceBranchId, setSourceBranchId] = useState<string>('');
+  const isMainSource = branches.find((branch) => branch.id === sourceBranchId)?.branch_type === 'MAIN';
   const [destinationBranchId, setDestinationBranchId] = useState<string>('');
   const [dispatchNotes, setDispatchNotes] = useState<string>('');
   const [dispatchCart, setDispatchCart] = useState<DispatchCartItem[]>([]);
@@ -96,7 +97,7 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
 
         if (mainB) {
           setSourceBranchId(mainB.id);
-          const subBranches = bList.filter((b) => b.id !== mainB.id);
+          const subBranches = bList.filter((b) => b.branch_type === 'SUB_BRANCH');
           if (subBranches.length > 0) {
             setDestinationBranchId(subBranches[0].id);
           }
@@ -115,7 +116,7 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
     try {
       const [prodsData, stockData] = await Promise.all([
         productService.getActiveProducts(),
-        inventoryService.getFEFOInventory(sourceBranchId),
+        isMainSource ? Promise.resolve([]) : inventoryService.getFEFOInventory(sourceBranchId),
       ]);
       setSourceProducts(prodsData);
       setSourceFefo(stockData);
@@ -124,7 +125,7 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
     } finally {
       setLoadingSourceStock(false);
     }
-  }, [sourceBranchId]);
+  }, [sourceBranchId, isMainSource]);
 
   useEffect(() => {
     if (activeTab === 'dispatch') {
@@ -192,9 +193,9 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
     variant: ProductWithVariants['variants'][0]
   ) => {
     setDispatchError(null);
-    const availableStock = stockByVariant.get(variant.id) || 0;
+    const availableStock = isMainSource ? null : stockByVariant.get(variant.id) || 0;
 
-    if (availableStock <= 0) {
+    if (availableStock !== null && availableStock <= 0) {
       setDispatchError(`"${product.name} - ${variant.name}" has zero unexpired stock at Source Branch.`);
       return;
     }
@@ -203,7 +204,7 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
 
     if (existingIdx > -1) {
       const item = dispatchCart[existingIdx];
-      if (item.quantity + 1 > availableStock) {
+      if (availableStock !== null && item.quantity + 1 > availableStock) {
         setDispatchError(`Cannot dispatch more than ${availableStock} available units.`);
         return;
       }
@@ -250,6 +251,7 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
       const transferId = await transferService.createTransfer({
         source_branch_id: sourceBranchId,
         destination_branch_id: destinationBranchId,
+        source_is_main: isMainSource,
         notes: dispatchNotes,
         dispatched_by: profile.id,
         items: dispatchCart.map((i) => ({
@@ -370,7 +372,7 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
             Inter-Branch Stock Transfers
           </h2>
           <p className="text-sm text-slate-600 mt-0.5">
-            Moodubidre dispatch, in-transit manifests, destination receipt approval, and FEFO inventory movements.
+            Main Branch dispatch records fresh production without a stock balance; sub-branch dispatch and receipt continue using FEFO inventory.
           </p>
         </div>
 
@@ -621,7 +623,7 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
               <div className="flex items-center justify-between">
                 <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
                   <Building2 className="w-4 h-4 text-brand-700" />
-                  Source Branch Available FEFO Stock
+                  {isMainSource ? 'Main Branch Product Catalogue' : 'Source Branch Available FEFO Stock'}
                 </h3>
                 <span className="text-xs text-slate-500 font-medium">
                   {mainBranch?.name || 'Moodubidre'}
@@ -668,8 +670,8 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
 
                     <div className="pt-2 border-t border-slate-100 space-y-1.5">
                       {prod.variants.map((v) => {
-                        const stock = stockByVariant.get(v.id) || 0;
-                        const disabled = stock <= 0;
+                        const stock = isMainSource ? null : stockByVariant.get(v.id) || 0;
+                        const disabled = stock !== null && stock <= 0;
 
                         return (
                           <div
@@ -680,10 +682,10 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
                               <span className="font-semibold text-slate-800">{v.name}</span>
                               <p
                                 className={`text-[10px] font-medium ${
-                                  stock > 0 ? 'text-emerald-700' : 'text-rose-600 font-bold'
+                                  stock === null || stock > 0 ? 'text-emerald-700' : 'text-rose-600 font-bold'
                                 }`}
                               >
-                                {stock > 0 ? `Stock: ${stock} available` : 'No Stock'}
+                                {stock === null ? 'Fresh production · no stock balance' : stock > 0 ? `Stock: ${stock} available` : 'No Stock'}
                               </p>
                             </div>
 
@@ -739,7 +741,7 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-bold text-brand-900 bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
               >
                 {branches
-                  .filter((b) => b.id !== sourceBranchId)
+                  .filter((b) => b.id !== sourceBranchId && (!isMainSource || b.branch_type === 'SUB_BRANCH'))
                   .map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name} ({b.branch_code})
@@ -753,7 +755,11 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
               <div className="py-12 text-center text-slate-400 space-y-2">
                 <Package className="w-10 h-10 mx-auto text-slate-300" />
                 <p className="text-sm font-medium text-slate-600">No items added to dispatch</p>
-                <p className="text-xs text-slate-400">Select available products from Moodubidre stock on left.</p>
+                <p className="text-xs text-slate-400">
+                  {isMainSource
+                    ? 'Select freshly made products and enter the dispatched quantities.'
+                    : 'Select available products from source branch stock on left.'}
+                </p>
               </div>
             ) : (
               <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1 divide-y divide-slate-100">
@@ -785,11 +791,13 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
                         <input
                           type="number"
                           min="1"
-                          max={item.available_stock}
+                          max={item.available_stock ?? undefined}
                           value={item.quantity}
                           onChange={(e) => {
                             const val = parseInt(e.target.value) || 1;
-                            const clamped = Math.min(item.available_stock, Math.max(1, val));
+                            const clamped = item.available_stock === null
+                              ? Math.max(1, val)
+                              : Math.min(item.available_stock, Math.max(1, val));
                             setDispatchCart((prev) =>
                               prev.map((i) =>
                                 i.product_variant_id === item.product_variant_id
@@ -800,7 +808,9 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
                           }}
                           className="w-16 px-2 py-1 border border-slate-300 rounded text-right font-bold text-slate-900"
                         />
-                        <span className="text-[10px] text-slate-400">/ {item.available_stock} avail</span>
+                        {item.available_stock !== null && (
+                          <span className="text-[10px] text-slate-400">/ {item.available_stock} avail</span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -858,8 +868,8 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
               Pending Incoming Transfers for Receipt Approval
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Destination branch employees must cross-check received stock quantities and approve receipt.
-              Source stock is deducted and destination stock is increased ONLY upon receipt approval.
+              Destination branch employees must cross-check received quantities and approve receipt.
+              Approval adds received quantities to destination inventory; source inventory is deducted only when the source is a stock-holding sub-branch.
             </p>
           </div>
 

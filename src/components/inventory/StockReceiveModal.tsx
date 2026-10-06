@@ -63,7 +63,8 @@ export const StockReceiveModal: React.FC<StockReceiveModalProps> = ({
         if (active) {
           setBranches(data);
           if (!selectedBranchId && data.length > 0) {
-            setSelectedBranchId(data[0].id);
+            const firstSubBranch = data.find((branch) => branch.branch_type === 'SUB_BRANCH');
+            if (firstSubBranch) setSelectedBranchId(firstSubBranch.id);
           }
         }
       })
@@ -105,6 +106,10 @@ export const StockReceiveModal: React.FC<StockReceiveModalProps> = ({
     const qty = Number(quantity);
     if (!selectedBranchId) {
       setError('Please select a branch.');
+      return;
+    }
+    if (branches.find((branch) => branch.id === selectedBranchId)?.branch_type === 'MAIN') {
+      setError('Main Branch does not use inventory stock balances.');
       return;
     }
     if (!selectedVariantId) {
@@ -195,7 +200,7 @@ export const StockReceiveModal: React.FC<StockReceiveModalProps> = ({
                 onChange={(e) => setSelectedBranchId(e.target.value)}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
               >
-                {branches.map((b) => (
+                {branches.filter((branch) => branch.branch_type === 'SUB_BRANCH').map((b) => (
                   <option key={b.id} value={b.id}>
                     {b.name} ({b.branch_code})
                   </option>

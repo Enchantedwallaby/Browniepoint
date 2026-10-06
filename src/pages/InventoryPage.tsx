@@ -52,13 +52,14 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
 }) => {
   const isOwner = profile.role === 'OWNER';
   const isBranchEmployee = profile.role === 'BRANCH_EMPLOYEE';
+  const isMainBranchEmployee = profile.role === 'MAIN_BRANCH_EMPLOYEE';
 
   // Active Tab
   const [activeTab, setActiveTab] = useState<'inventory' | 'catalogue'>('inventory');
 
   // Branch Selection
   const [selectedBranchId, setSelectedBranchId] = useState<string>(
-    isBranchEmployee && assignedBranch ? assignedBranch.id : ''
+    (isBranchEmployee || isMainBranchEmployee) && assignedBranch ? assignedBranch.id : ''
   );
 
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -78,6 +79,11 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
 
   // Stock Receive Modal State
   const [showStockModal, setShowStockModal] = useState(false);
+  const selectedBranch = branches.find((branch) => branch.id === selectedBranchId);
+  const mainBranchInventory =
+    isOwner
+      ? selectedBranch?.branch_type === 'MAIN' ? selectedBranch : null
+      : assignedBranch?.branch_type === 'MAIN' ? assignedBranch : null;
 
   // Fetch Branches for Owner filter
   useEffect(() => {
@@ -90,7 +96,10 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
   const fetchInventoryData = async () => {
     setLoading(true);
     try {
-      const effectiveBranchId = isBranchEmployee && assignedBranch ? assignedBranch.id : selectedBranchId || undefined;
+      const effectiveBranchId =
+        (isBranchEmployee || isMainBranchEmployee) && assignedBranch
+          ? assignedBranch.id
+          : selectedBranchId || undefined;
       const data = await inventoryService.getFEFOInventory(effectiveBranchId, selectedCategory);
       const summ = await inventoryService.getInventorySummary(effectiveBranchId);
 
@@ -104,10 +113,10 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
   };
 
   useEffect(() => {
-    if (activeTab === 'inventory') {
+    if (activeTab === 'inventory' && !mainBranchInventory) {
       fetchInventoryData();
     }
-  }, [activeTab, selectedBranchId, selectedCategory]);
+  }, [activeTab, selectedBranchId, selectedCategory, mainBranchInventory]);
 
   // Filtered inventory list
   const filteredInventory = inventory.filter((item) => {
@@ -128,7 +137,9 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
     return matchesSearch && matchesExpiry;
   });
 
-  const pageTitle = isBranchEmployee ? 'My Inventory' : 'Inventory Management';
+  const pageTitle = mainBranchInventory
+    ? 'Inventory'
+    : isBranchEmployee ? 'My Inventory' : 'Inventory Management';
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
@@ -140,9 +151,11 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
             {pageTitle}
           </h2>
           <p className="text-sm text-slate-600 mt-1">
-            {isBranchEmployee && assignedBranch
+            {mainBranchInventory
+              ? `Inventory balances are not tracked for ${mainBranchInventory.name} (${mainBranchInventory.branch_code}).`
+              : isBranchEmployee && assignedBranch
               ? `Stock & Expiry Tracking for ${assignedBranch.name} (${assignedBranch.branch_code})`
-              : 'Batch-aware, FEFO-sorted inventory and product catalogue management.'}
+              : 'Sub-branch batch inventory with FEFO expiry tracking and product catalogue management.'}
           </p>
         </div>
 
@@ -156,7 +169,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            Stock & Inventory
+            {mainBranchInventory ? 'Stock not tracked' : 'Stock & Inventory'}
           </button>
           <button
             onClick={() => setActiveTab('catalogue')}
@@ -175,7 +188,12 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       {activeTab === 'catalogue' && <CatalogueManagement profile={profile} />}
 
       {/* INVENTORY TAB */}
-      {activeTab === 'inventory' && (
+      {activeTab === 'inventory' && mainBranchInventory ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-600">
+          Main Branch sales do not require an on-hand stock balance. Sub-branch inventory,
+          expiry tracking, and FEFO remain unchanged.
+        </div>
+      ) : activeTab === 'inventory' && (
         <>
           {/* Summary Metric Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -239,7 +257,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search stock by product, variant, or batch..."
+                placeholder="Search sub-branch stock by product, variant, or batch..."
                 className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
             </div>
@@ -312,7 +330,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
             <div className="flex items-center space-x-2 shrink-0">
               <Button variant="primary" size="sm" onClick={() => setShowStockModal(true)}>
                 <Plus className="w-4 h-4" />
-                <span>Receive / Add Stock</span>
+                <span>Receive / Add Sub-Branch Stock</span>
               </Button>
 
               <button
@@ -330,7 +348,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
             <div className="flex items-center space-x-2">
               <Layers className="w-4 h-4 text-brand-700 shrink-0" />
               <span>
-                <strong className="font-bold">FEFO Prioritization:</strong> Batches are automatically ordered by earliest expiry date (<code className="font-mono">v_fefo_inventory</code>). Dispatch and sale operations consume earliest expiring stock first.
+                <strong className="font-bold">FEFO Prioritization:</strong> Sub-branch batches are ordered by earliest expiry date (<code className="font-mono">v_fefo_inventory</code>). Sub-branch dispatch and sale operations consume earliest-expiring stock first.
               </span>
             </div>
             <span className="font-mono text-[10px] text-brand-700 bg-brand-100 px-2 py-0.5 rounded font-bold shrink-0">
@@ -440,7 +458,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       )}
 
       {/* STOCK RECEIVE MODAL */}
-      {showStockModal && (
+      {showStockModal && !mainBranchInventory && (
         <StockReceiveModal
           profile={profile}
           assignedBranch={assignedBranch}
