@@ -1,0 +1,7 @@
+# Linked to the existing Brownie Point Supabase project.
+# Used only for Edge Function metadata; does not change database schema.
+
+project_id = "kxyewxsgboeityhqozja"
+
+[functions.create-employee]
+verify_jwt = true
