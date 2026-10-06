@@ -194,6 +194,7 @@ export interface Sale {
   branch_id: string;
   sale_date: string;
   total_amount: number;
+  discount_amount: number;
   payment_method: PaymentMethod;
   amount_cash: number;
   amount_online: number;

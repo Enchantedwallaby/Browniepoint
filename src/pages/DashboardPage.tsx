@@ -75,7 +75,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         <div>
           <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
             <LayoutDashboard className="w-6 h-6 text-brand-700" />
-            {isOwner ? 'Owner Dashboard' : isMainEmployee ? 'Main Branch Dashboard' : 'Branch Dashboard'}
+            {isOwner ? 'Owner Dashboard' : isMainEmployee ? 'Moodubidre Dashboard' : 'Branch Dashboard'}
           </h2>
           <p className="text-sm text-slate-600 mt-1">
             {isOwner && 'System-wide operational summary across all Brownie Point branches.'}
@@ -85,7 +85,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         </div>
 
         <Badge variant={isOwner ? 'success' : 'primary'} className="self-start sm:self-auto py-1 px-3 text-xs">
-          {isOwner ? 'Full Owner Access' : isMainEmployee ? 'Main Branch Operations' : assignedBranch ? assignedBranch.name : 'Branch Employee'}
+          {isOwner ? 'Full Owner Access' : isMainEmployee ? 'Moodubidre Operations' : assignedBranch ? assignedBranch.name : 'Branch Employee'}
         </Badge>
       </div>
 
@@ -220,7 +220,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               <PackageCheck className="w-5 h-5" />
             </div>
             <div>
-              <p className="text-xs text-slate-500 font-medium">Main Branch Stock Qty</p>
+              <p className="text-xs text-slate-500 font-medium">Moodubidre Stock Qty</p>
               <p className="text-xl font-bold text-slate-900">{invSummary.totalAvailableQuantity}</p>
             </div>
           </Card>

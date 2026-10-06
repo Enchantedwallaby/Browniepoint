@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
+import { CustomerReceipt } from '@/components/receipt/CustomerReceipt';
+import { thermalPrintService, type PrinterStatusState } from '@/services/thermalPrintService';
 import { productService, type ProductWithVariants } from '@/services/productService';
 import { inventoryService } from '@/services/inventoryService';
 import { branchService } from '@/services/branchService';
@@ -20,8 +22,11 @@ import {
   Eye,
   Package,
   X,
-  FileText,
   DollarSign,
+  Printer,
+  FileText,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
 
 interface SalesPageProps {
@@ -60,8 +65,10 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
+  const [discountInput, setDiscountInput] = useState('0');
   const [amountCash, setAmountCash] = useState<string>('');
   const [amountOnline, setAmountOnline] = useState<string>('');
+  const [cashReceived, setCashReceived] = useState<string>('');
   const [customerName, setCustomerName] = useState('');
   const [saleNotes, setSaleNotes] = useState('');
   const [processingCheckout, setProcessingCheckout] = useState(false);
@@ -75,6 +82,40 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
   const [historyFilterStatus, setHistoryFilterStatus] = useState<string>('ALL');
   const [historySearchQuery, setHistorySearchQuery] = useState('');
   const [selectedSaleDetail, setSelectedSaleDetail] = useState<SaleDetailed | null>(null);
+
+  // QZ Thermal Printer State
+  const [printerStatus, setPrinterStatus] = useState<PrinterStatusState>(thermalPrintService.getStatus());
+  const [printingThermal, setPrintingThermal] = useState(false);
+  const [printNotice, setPrintNotice] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+
+  // Initialize QZ Tray WebSocket Connection
+  useEffect(() => {
+    const unsubscribe = thermalPrintService.subscribe((status) => {
+      setPrinterStatus(status);
+    });
+    thermalPrintService.initConnection();
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  // Direct ESC/POS Thermal Print Action via QZ Tray
+  const handleDirectThermalPrint = async (saleToPrint?: SaleDetailed | null) => {
+    const targetSale = saleToPrint || recentCompletedSale || selectedSaleDetail;
+    if (!targetSale) return;
+
+    setPrintingThermal(true);
+    setPrintNotice(null);
+
+    const res = await thermalPrintService.printReceipt(targetSale, selectedBranchName);
+    setPrintingThermal(false);
+
+    if (res.success) {
+      setPrintNotice({ type: 'success', message: 'Receipt printed directly to POS-80C!' });
+    } else {
+      setPrintNotice({ type: 'error', message: res.error || 'Failed to print receipt.' });
+    }
+  };
 
   // 1. Fetch Branches for Owner selector
   useEffect(() => {
@@ -265,12 +306,19 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
   const grandTotal = useMemo(() => {
     return cart.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
   }, [cart]);
+  const discountAmount = Math.min(
+    grandTotal,
+    Math.max(0, Math.round((Number(discountInput) || 0) * 100) / 100)
+  );
+  const finalTotal = Math.max(0, Math.round((grandTotal - discountAmount) * 100) / 100);
 
   // Mixed Payment Live Balance calculation
   const mixedCashVal = parseFloat(amountCash) || 0;
   const mixedOnlineVal = parseFloat(amountOnline) || 0;
   const mixedTotalEntered = Math.round((mixedCashVal + mixedOnlineVal) * 100) / 100;
-  const mixedDiff = Math.round((grandTotal - mixedTotalEntered) * 100) / 100;
+  const mixedDiff = Math.round((finalTotal - mixedTotalEntered) * 100) / 100;
+  const cashTendered = cashReceived.trim() ? Number(cashReceived) || 0 : finalTotal;
+  const cashChange = Math.max(0, Math.round((cashTendered - finalTotal) * 100) / 100);
 
   // Checkout Action
   const handleCheckout = async () => {
@@ -298,10 +346,15 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
     if (paymentMethod === 'MIXED') {
       if (Math.abs(mixedDiff) > 0.01) {
         setCheckoutError(
-          `Mixed payment amounts do not equal total. Total required: ₹${grandTotal}, Current sum: ₹${mixedTotalEntered} (${mixedDiff > 0 ? `₹${mixedDiff} remaining` : `₹${Math.abs(mixedDiff)} over`}).`
+          `Mixed payment amounts do not equal total. Total required: ₹${finalTotal}, Current sum: ₹${mixedTotalEntered} (${mixedDiff > 0 ? `₹${mixedDiff} remaining` : `₹${Math.abs(mixedDiff)} over`}).`
         );
         return;
       }
+    }
+
+    if (paymentMethod === 'CASH' && cashTendered < finalTotal) {
+      setCheckoutError(`Cash received must be at least ₹${finalTotal.toFixed(2)}.`);
+      return;
     }
 
     setProcessingCheckout(true);
@@ -310,13 +363,14 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
       const completed = await salesService.createSale({
         branch_id: selectedBranchId,
         payment_method: paymentMethod,
-        amount_cash: paymentMethod === 'CASH' ? grandTotal : paymentMethod === 'MIXED' ? mixedCashVal : 0,
+        discount_amount: discountAmount,
+        amount_cash: paymentMethod === 'CASH' ? finalTotal : paymentMethod === 'MIXED' ? mixedCashVal : 0,
         amount_online:
           paymentMethod === 'MIXED'
             ? mixedOnlineVal
             : paymentMethod === 'CASH'
             ? 0
-            : grandTotal,
+            : finalTotal,
         customer_name: customerName,
         notes: saleNotes,
         performed_by: profile.id,
@@ -333,10 +387,17 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
       // Show receipt modal & clear state
       setRecentCompletedSale(completed);
       setCart([]);
+      setDiscountInput('0');
       setAmountCash('');
       setAmountOnline('');
+      setCashReceived('');
       setCustomerName('');
       setSaleNotes('');
+
+      // Auto direct thermal print via QZ Tray if POS-80C is ready
+      if (thermalPrintService.getStatus().printerFound) {
+        handleDirectThermalPrint(completed);
+      }
 
       // Reload inventory stock to update available counts
       loadCatalogueAndStock();
@@ -400,23 +461,55 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
           </p>
         </div>
 
-        {/* Branch Scoping Selector */}
-        {isOwner && branches.length > 0 && (
-          <div className="flex items-center gap-2 bg-white px-3 py-1.5 border border-slate-300 rounded-lg shadow-sm">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Branch:</span>
-            <select
-              value={selectedBranchId}
-              onChange={(e) => setSelectedBranchId(e.target.value)}
-              className="text-sm font-semibold text-brand-900 bg-transparent outline-none cursor-pointer"
+        <div className="flex flex-wrap items-center gap-3">
+          {/* QZ Thermal Printer Status Badge */}
+          <div
+            className="flex items-center gap-1.5 bg-white px-3 py-1.5 border border-slate-300 rounded-lg shadow-sm"
+            title={printerStatus.lastError ?? printerStatus.statusMessage}
+          >
+            {printerStatus.printerFound ? (
+              <span className="flex items-center gap-1.5 text-xs font-bold text-emerald-700">
+                <Wifi className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
+                POS-80C Ready
+              </span>
+            ) : printerStatus.qzConnected ? (
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-700">
+                <Wifi className="w-3.5 h-3.5 text-amber-600" />
+                QZ Connected (POS-80C Not Found)
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-500">
+                <WifiOff className="w-3.5 h-3.5 text-slate-400" />
+                QZ Offline
+              </span>
+            )}
+            <button
+              onClick={() => thermalPrintService.initConnection()}
+              className="p-1 text-slate-400 hover:text-brand-900 rounded transition-colors ml-1"
+              title="Refresh / Reconnect QZ Tray Printer"
             >
-              {branches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name} ({b.branch_code})
-                </option>
-              ))}
-            </select>
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
           </div>
-        )}
+
+          {/* Branch Scoping Selector */}
+          {isOwner && branches.length > 0 && (
+            <div className="flex items-center gap-2 bg-white px-3 py-1.5 border border-slate-300 rounded-lg shadow-sm">
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Branch:</span>
+              <select
+                value={selectedBranchId}
+                onChange={(e) => setSelectedBranchId(e.target.value)}
+                className="text-sm font-semibold text-brand-900 bg-transparent outline-none cursor-pointer"
+              >
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name} ({b.branch_code})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Main Mode Tabs */}
@@ -722,10 +815,36 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
             {/* PAYMENT & CHECKOUT SECTION */}
             {cart.length > 0 && (
               <div className="pt-3 border-t border-slate-200 space-y-3">
-                {/* Grand Total */}
-                <div className="flex items-center justify-between p-3 bg-brand-50 border border-brand-200 rounded-xl">
-                  <span className="text-sm font-bold text-brand-950">Grand Total</span>
-                  <span className="text-xl font-black text-brand-900">₹{grandTotal.toFixed(2)}</span>
+                <div>
+                  <label htmlFor="sale-discount" className="block text-xs font-bold text-slate-700 mb-1">
+                    Discount (₹)
+                  </label>
+                  <input
+                    id="sale-discount"
+                    type="number"
+                    min="0"
+                    max={grandTotal}
+                    step="0.01"
+                    value={discountInput}
+                    onChange={(e) => setDiscountInput(e.target.value)}
+                    onBlur={() => setDiscountInput(discountAmount.toFixed(2))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
+
+                <div className="p-3 bg-brand-50 border border-brand-200 rounded-xl space-y-1.5">
+                  <div className="flex items-center justify-between text-xs text-slate-700">
+                    <span>Subtotal</span>
+                    <span>₹{grandTotal.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-slate-700">
+                    <span>Discount</span>
+                    <span>-₹{discountAmount.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between pt-1 border-t border-brand-200">
+                    <span className="text-sm font-bold text-brand-950">TOTAL</span>
+                    <span className="text-xl font-black text-brand-900">₹{finalTotal.toFixed(2)}</span>
+                  </div>
                 </div>
 
                 {/* Payment Method Tabs */}
@@ -751,12 +870,31 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
                   </div>
                 </div>
 
+                {paymentMethod === 'CASH' && (
+                  <div className="space-y-1.5">
+                    <label htmlFor="cash-received" className="block text-xs font-bold text-slate-700">
+                      Cash Received (₹)
+                    </label>
+                    <input
+                      id="cash-received"
+                      type="number"
+                      min={finalTotal}
+                      step="0.01"
+                      value={cashReceived}
+                      onChange={(e) => setCashReceived(e.target.value)}
+                      placeholder={finalTotal.toFixed(2)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                    <p className="text-xs text-slate-600">Change: ₹{cashChange.toFixed(2)}</p>
+                  </div>
+                )}
+
                 {/* Mixed Payment Split Inputs */}
                 {paymentMethod === 'MIXED' && (
                   <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-2">
                     <p className="text-xs font-bold text-amber-900 flex items-center justify-between">
                       <span>Mixed Payment Split</span>
-                      <span className="text-[11px] font-normal text-amber-800">Must equal ₹{grandTotal}</span>
+                      <span className="text-[11px] font-normal text-amber-800">Must equal ₹{finalTotal.toFixed(2)}</span>
                     </p>
 
                     <div className="grid grid-cols-2 gap-2">
@@ -836,7 +974,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
                   ) : (
                     <>
                       <CheckCircle2 className="w-4 h-4" />
-                      Complete Sale (₹{grandTotal.toFixed(2)})
+                      Complete Sale (₹{finalTotal.toFixed(2)})
                     </>
                   )}
                 </button>
@@ -1179,6 +1317,31 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
                 </div>
               </div>
 
+              {/* Print Status Notice Alert */}
+              {printNotice && (
+                <div
+                  className={`p-3 rounded-xl text-xs font-semibold flex items-center justify-between gap-2 transition-all ${
+                    printNotice.type === 'success'
+                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                      : printNotice.type === 'error'
+                      ? 'bg-rose-50 text-rose-800 border border-rose-200'
+                      : 'bg-blue-50 text-blue-800 border border-blue-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    {printNotice.type === 'success' ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    )}
+                    <span>{printNotice.message}</span>
+                  </div>
+                  <button onClick={() => setPrintNotice(null)} className="text-slate-400 hover:text-slate-600">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
               {/* Total Summary */}
               <div className="pt-2 border-t border-slate-200 flex justify-between items-center">
                 <span className="font-bold text-slate-900 text-sm">Total Paid</span>
@@ -1189,19 +1352,35 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
             </div>
 
             {/* Modal Footer */}
-            <div className="bg-slate-50 px-6 py-4 border-t border-slate-200 flex justify-end gap-3">
-              <button
-                onClick={() => window.print()}
-                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 font-semibold text-xs rounded-lg transition-colors flex items-center gap-1.5"
-              >
-                <FileText className="w-3.5 h-3.5" />
-                Print Receipt
-              </button>
+            <div className="bg-slate-50 px-6 py-4 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                {/* Direct QZ Thermal Print Button */}
+                <button
+                  onClick={() => handleDirectThermalPrint()}
+                  disabled={printingThermal}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg transition-colors flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                  title="Send receipt directly to USB POS-80C printer via QZ Tray without print dialog"
+                >
+                  <Printer className="w-4 h-4" />
+                  {printingThermal ? 'Printing to POS-80C...' : 'Print Receipt (POS-80C)'}
+                </button>
+
+                {/* Optional Browser Print Fallback */}
+                <button
+                  onClick={() => window.print()}
+                  className="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold text-xs rounded-lg transition-colors flex items-center gap-1"
+                  title="Fallback Browser Print"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  Browser Print
+                </button>
+              </div>
 
               <button
                 onClick={() => {
                   setRecentCompletedSale(null);
                   setSelectedSaleDetail(null);
+                  setPrintNotice(null);
                 }}
                 className="px-4 py-2 bg-brand-900 hover:bg-brand-950 text-white font-bold text-xs rounded-lg transition-colors"
               >
@@ -1209,6 +1388,16 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Thermal Receipt Container — hidden on screen, visible only during window.print() */}
+      {(recentCompletedSale || selectedSaleDetail) && (
+        <div className="receipt-print-wrapper">
+          <CustomerReceipt
+            sale={(recentCompletedSale || selectedSaleDetail)!}
+            branchNameFallback={selectedBranchName}
+          />
         </div>
       )}
     </div>

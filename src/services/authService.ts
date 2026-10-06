@@ -1,10 +1,24 @@
 import { supabase } from '@/lib/supabase';
 import type { Profile } from '@/types/database';
 
+export const ACCESS_DISABLED_MESSAGE =
+  'Your login access has been disabled. Please contact the Owner.';
+
 export const authService = {
   async signIn(email: string, password: string): Promise<void> {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw error;
+    if (error) {
+      if (error.message.toLowerCase().includes('banned')) {
+        throw new Error(ACCESS_DISABLED_MESSAGE);
+      }
+      throw error;
+    }
+
+    const profile = await this.getCurrentProfile();
+    if (!profile || !profile.active) {
+      await supabase.auth.signOut().catch(() => undefined);
+      throw new Error(profile ? ACCESS_DISABLED_MESSAGE : 'Unable to verify account access. Please contact the Owner.');
+    }
   },
 
   async getCurrentProfile(): Promise<Profile | null> {

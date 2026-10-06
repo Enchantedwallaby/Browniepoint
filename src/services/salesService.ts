@@ -15,6 +15,7 @@ export interface CreateSaleItemParam {
 export interface CreateSaleParams {
   branch_id: string;
   payment_method: PaymentMethod;
+  discount_amount: number;
   amount_cash?: number;
   amount_online?: number;
   customer_name?: string;
@@ -78,6 +79,7 @@ export const salesService = {
     const { data: saleId, error: rpcErr } = await supabase.rpc('process_pos_sale', {
       p_branch_id: branchId,
       p_payment_method: paymentMethod,
+      p_discount_amount: params.discount_amount,
       p_amount_cash: amountCash,
       p_amount_online: amountOnline,
       p_customer_name: customerName || null,
@@ -103,12 +105,15 @@ export const salesService = {
     }
 
     // Fallback object construct if query delay occurs
-    const calculatedTotal = params.items.reduce((s, i) => s + i.quantity * i.unit_price, 0);
+    const calculatedSubtotal = params.items.reduce((s, i) => s + i.quantity * i.unit_price, 0);
+    const discountAmount = Math.min(Math.max(Number(params.discount_amount) || 0, 0), calculatedSubtotal);
+    const calculatedTotal = Math.max(0, calculatedSubtotal - discountAmount);
     return {
       id: createdSaleId,
       branch_id: params.branch_id,
       sale_date: new Date().toISOString(),
       total_amount: calculatedTotal,
+      discount_amount: discountAmount,
       payment_method: params.payment_method,
       amount_cash: params.payment_method === 'CASH' ? calculatedTotal : Number(params.amount_cash || 0),
       amount_online: params.payment_method === 'CASH' ? 0 : Number(params.amount_online || 0),
@@ -206,6 +211,7 @@ export const salesService = {
       branch_id: row.branch_id,
       sale_date: row.sale_date,
       total_amount: Number(row.total_amount),
+      discount_amount: Number(row.discount_amount || 0),
       payment_method: row.payment_method,
       amount_cash: Number(row.amount_cash),
       amount_online: Number(row.amount_online),

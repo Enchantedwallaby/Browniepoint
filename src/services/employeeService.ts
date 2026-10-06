@@ -12,6 +12,8 @@ export interface CreateEmployeeParams {
   branch_id: string | null;
 }
 
+export type EmployeeAccessAction = 'REMOVE' | 'RESTORE';
+
 export const employeeService = {
   async listEmployees(): Promise<Profile[]> {
     const { data, error } = await supabase
@@ -57,6 +59,28 @@ export const employeeService = {
       throw new Error('Employee was created but the profile was not returned.');
     }
 
+    return profile;
+  },
+
+  async setEmployeeAccess(employeeId: string, action: EmployeeAccessAction): Promise<Profile> {
+    const { data, error } = await supabase.functions.invoke('manage-employee-access', {
+      body: { employee_id: employeeId, action },
+    });
+
+    if (error) {
+      if (error instanceof FunctionsHttpError) {
+        try {
+          const payload = await error.context.json();
+          if (payload?.error) throw new Error(String(payload.error));
+        } catch (parsed) {
+          if (parsed instanceof Error && parsed.message !== error.message) throw parsed;
+        }
+      }
+      throw new Error(error.message || 'Failed to update employee access.');
+    }
+
+    const profile = data?.profile as Profile | undefined;
+    if (!profile) throw new Error('Employee access was updated but the profile was not returned.');
     return profile;
   },
 };

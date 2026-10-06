@@ -5,3 +5,6 @@ project_id = "kxyewxsgboeityhqozja"
 
 [functions.create-employee]
 verify_jwt = true
+
+[functions.manage-employee-access]
+verify_jwt = true

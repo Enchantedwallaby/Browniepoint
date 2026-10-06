@@ -27,10 +27,11 @@ dist-ssr
 .env
 .env.*
 !.env.example
+/qz-tray/digital-certificate.txt
+/qz-tray/private-key.pem
 
 # Temporary/debug files
 scratch/
 debugGetOrders.mjs
 supabase/.temp/
-
 

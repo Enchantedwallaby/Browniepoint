@@ -2,15 +2,22 @@ import React, { useState } from 'react';
 import { LogIn, AlertCircle } from 'lucide-react';
 import { authService } from '@/services/authService';
 
-export const LoginPage: React.FC = () => {
+interface LoginPageProps {
+  notice?: string | null;
+}
+
+export const LoginPage: React.FC<LoginPageProps> = ({ notice }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [noticeDismissed, setNoticeDismissed] = useState(false);
+  const displayedError = error ?? (noticeDismissed ? null : notice ?? null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setNoticeDismissed(true);
     setLoading(true);
 
     try {
@@ -56,10 +63,10 @@ export const LoginPage: React.FC = () => {
 
         <form onSubmit={handleSubmit} className="px-6 py-6 space-y-4">
           {/* Error Banner */}
-          {error && (
+          {displayedError && (
             <div className="flex items-start gap-2 p-3 bg-rose-50 border border-rose-200 rounded-lg text-sm text-rose-700">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{error}</span>
+              <span>{displayedError}</span>
             </div>
           )}
 

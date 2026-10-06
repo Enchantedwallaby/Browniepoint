@@ -32,7 +32,7 @@ export const BranchesPage: React.FC<BranchesPageProps> = ({ profile }) => {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [fullName, setFullName] = useState('Branch 1 Employee');
+  const [fullName, setFullName] = useState('Alvas Vidayagiri Employee');
   const [email, setEmail] = useState('branch1@browniepoint.com');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<Exclude<UserRole, 'OWNER'>>('BRANCH_EMPLOYEE');
@@ -40,6 +40,9 @@ export const BranchesPage: React.FC<BranchesPageProps> = ({ profile }) => {
   const [creating, setCreating] = useState(false);
   const [createMessage, setCreateMessage] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [employeeToDeactivate, setEmployeeToDeactivate] = useState<Profile | null>(null);
+  const [updatingAccessFor, setUpdatingAccessFor] = useState<string | null>(null);
+  const [accessError, setAccessError] = useState<string | null>(null);
 
   const fetchData = async () => {
     setLoading(true);
@@ -49,7 +52,7 @@ export const BranchesPage: React.FC<BranchesPageProps> = ({ profile }) => {
       setBranches(branchData);
 
       if (!branchId) {
-        const branch1 = branchData.find((b) => b.branch_code === 'BRANCH_1') || branchData.find((b) => b.name === 'Branch 1');
+        const branch1 = branchData.find((b) => b.branch_code === 'BRANCH_1');
         if (branch1) setBranchId(branch1.id);
       }
 
@@ -116,6 +119,21 @@ export const BranchesPage: React.FC<BranchesPageProps> = ({ profile }) => {
     }
   };
 
+  const handleEmployeeAccess = async (employee: Profile, action: 'REMOVE' | 'RESTORE') => {
+    setAccessError(null);
+    setUpdatingAccessFor(employee.id);
+
+    try {
+      await employeeService.setEmployeeAccess(employee.id, action);
+      setEmployees(await employeeService.listEmployees());
+      setEmployeeToDeactivate(null);
+    } catch (err: unknown) {
+      setAccessError(err instanceof Error ? err.message : 'Failed to update employee access.');
+    } finally {
+      setUpdatingAccessFor(null);
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 pb-4 gap-4">
@@ -125,7 +143,7 @@ export const BranchesPage: React.FC<BranchesPageProps> = ({ profile }) => {
             Branch Management
           </h2>
           <p className="text-sm text-slate-600 mt-1">
-            Overview and operational status of Brownie Point main branch and sub-branches.
+            Overview and operational status of Moodubidre and its sub-branches.
           </p>
         </div>
         <button
@@ -287,6 +305,7 @@ export const BranchesPage: React.FC<BranchesPageProps> = ({ profile }) => {
                   <th className="px-4 py-2 font-semibold">Role</th>
                   <th className="px-4 py-2 font-semibold">Branch</th>
                   <th className="px-4 py-2 font-semibold">Status</th>
+                  <th className="px-4 py-2 font-semibold">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -301,10 +320,36 @@ export const BranchesPage: React.FC<BranchesPageProps> = ({ profile }) => {
                     </td>
                     <td className="px-4 py-2 text-slate-600">{branchNameById(emp.branch_id)}</td>
                     <td className="px-4 py-2">
-                      {emp.active ? (
-                        <span className="text-emerald-700 font-medium">Active</span>
+                      <Badge variant={emp.active ? 'success' : 'danger'}>
+                        {emp.active ? 'Active' : 'Access Removed'}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-2">
+                      {emp.role !== 'OWNER' && emp.id !== profile.id ? (
+                        emp.active ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAccessError(null);
+                              setEmployeeToDeactivate(emp);
+                            }}
+                            className="text-xs font-semibold text-rose-700 hover:text-rose-900 disabled:opacity-50"
+                            disabled={updatingAccessFor === emp.id}
+                          >
+                            Remove Access
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleEmployeeAccess(emp, 'RESTORE')}
+                            className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 disabled:opacity-50"
+                            disabled={updatingAccessFor === emp.id}
+                          >
+                            {updatingAccessFor === emp.id ? 'Restoring…' : 'Restore Access'}
+                          </button>
+                        )
                       ) : (
-                        <span className="text-rose-700 font-medium">Inactive</span>
+                        <span className="text-slate-400">—</span>
                       )}
                     </td>
                   </tr>
@@ -312,6 +357,59 @@ export const BranchesPage: React.FC<BranchesPageProps> = ({ profile }) => {
               </tbody>
             </table>
           </div>
+
+          {accessError && !employeeToDeactivate && (
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-sm text-rose-700">
+              {accessError}
+            </div>
+          )}
+
+          {employeeToDeactivate && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="remove-access-title"
+                className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl"
+              >
+                <h3 id="remove-access-title" className="text-lg font-bold text-slate-900">
+                  Remove Login Access?
+                </h3>
+                <p className="mt-3 text-sm text-slate-700">
+                  {employeeToDeactivate.full_name} will no longer be able to log in to the Brownie Point Operations System.
+                </p>
+                <p className="mt-2 text-sm text-slate-700">
+                  Existing sales, orders, transfers, returns and audit history will <strong>NOT</strong> be deleted.
+                </p>
+                {accessError && (
+                  <div className="mt-3 p-3 bg-rose-50 border border-rose-200 rounded-lg text-sm text-rose-700">
+                    {accessError}
+                  </div>
+                )}
+                <div className="mt-6 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEmployeeToDeactivate(null);
+                      setAccessError(null);
+                    }}
+                    disabled={updatingAccessFor === employeeToDeactivate.id}
+                    className="px-4 py-2 rounded-lg border border-slate-300 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleEmployeeAccess(employeeToDeactivate, 'REMOVE')}
+                    disabled={updatingAccessFor === employeeToDeactivate.id}
+                    className="px-4 py-2 rounded-lg bg-rose-700 text-sm font-semibold text-white hover:bg-rose-800 disabled:opacity-50"
+                  >
+                    {updatingAccessFor === employeeToDeactivate.id ? 'Removing…' : 'Remove Access'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

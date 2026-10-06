@@ -117,13 +117,13 @@ Deno.serve(async (req) => {
 
     if (role === 'MAIN_BRANCH_EMPLOYEE' && branch.branch_type !== 'MAIN') {
       return jsonResponse(400, {
-        error: 'Main Branch employees must be assigned to the Main Branch.',
+        error: 'Main Branch employees must be assigned to Moodubidre.',
       });
     }
 
     if (role === 'BRANCH_EMPLOYEE' && branch.branch_type === 'MAIN') {
       return jsonResponse(400, {
-        error: 'Branch employees must be assigned to a sub-branch, not Main Branch.',
+        error: 'Branch employees must be assigned to a sub-branch, not Moodubidre.',
       });
     }
   }

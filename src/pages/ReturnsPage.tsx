@@ -27,7 +27,7 @@ interface ReturnsPageProps {
 type StatusFilter = 'ALL' | ReturnStatus;
 
 const reasonLabels: Record<ReturnReason, string> = {
-  RETURN_TO_MAIN: 'Return to Main Branch',
+  RETURN_TO_MAIN: 'Return to Moodubidre',
   EXPIRED: 'Expired',
   DAMAGED: 'Damaged',
   ADJUSTMENT: 'Other / Adjustment',

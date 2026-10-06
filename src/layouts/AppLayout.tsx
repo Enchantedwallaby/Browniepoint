@@ -82,7 +82,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
       : assignedBranch
       ? `${assignedBranch.name} (${assignedBranch.branch_code})`
       : profile.role === 'MAIN_BRANCH_EMPLOYEE'
-      ? 'Main Branch'
+      ? 'Moodubidre'
       : 'Unassigned Branch';
 
   const handleNavClick = (routeId: RouteId) => {

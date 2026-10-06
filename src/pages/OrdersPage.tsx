@@ -374,12 +374,12 @@ export const OrdersPage: React.FC<OrdersPageProps> = ({
         <div>
           <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
             <ShoppingBag className="w-6 h-6 text-brand-700" />
-            {isMainBranchOrOwner ? 'Main Branch Order Fulfillment' : 'Branch Procurement Orders'}
+            {isMainBranchOrOwner ? 'Moodubidre Order Fulfillment' : 'Branch Procurement Orders'}
           </h2>
           <p className="text-sm text-slate-600 mt-0.5">
             {isMainBranchOrOwner
               ? 'Receive, process, prepare, and dispatch next-day stock orders from sub-branches.'
-              : `Order cakes and products from Main Branch for next-day fulfillment (${assignedBranch?.name || 'Branch'}).`}
+              : `Order cakes and products from Moodubidre for next-day fulfillment (${assignedBranch?.name || 'Branch'}).`}
           </p>
         </div>
 
@@ -601,7 +601,7 @@ export const OrdersPage: React.FC<OrdersPageProps> = ({
           <p className="text-xs text-slate-500">
             {urgentOnlyFilter || searchQuery || dateFilter || statusTab !== 'ALL'
               ? 'Try adjusting your filters or search terms.'
-              : 'Click "Create Branch Order" to submit a stock requisition to Main Branch.'}
+              : 'Click "Create Branch Order" to submit a stock requisition to Moodubidre.'}
           </p>
         </div>
       ) : (
@@ -829,7 +829,7 @@ export const OrdersPage: React.FC<OrdersPageProps> = ({
                 <div>
                   <h4 className="font-bold text-base">Create Branch Procurement Order</h4>
                   <p className="text-xs text-brand-300">
-                    Requisition next-day cakes and bakery items from Main Branch.
+                    Requisition next-day cakes and bakery items from Moodubidre.
                   </p>
                 </div>
               </div>
@@ -1058,7 +1058,7 @@ export const OrdersPage: React.FC<OrdersPageProps> = ({
             {/* Modal Footer */}
             <div className="bg-slate-50 px-6 py-3.5 border-t border-slate-200 flex items-center justify-between shrink-0">
               <span className="text-xs text-slate-500">
-                Note: Creating this order does <strong>not</strong> deduct Main Branch stock until dispatched.
+                Note: Creating this order does <strong>not</strong> deduct Moodubidre stock until dispatched.
               </span>
               <div className="flex gap-2">
                 <button
@@ -1124,7 +1124,7 @@ export const OrdersPage: React.FC<OrdersPageProps> = ({
                   rows={3}
                   value={rejectionReason}
                   onChange={(e) => setRejectionReason(e.target.value)}
-                  placeholder="e.g. Raw materials unavailable; Main Branch kitchen at full capacity for tomorrow..."
+                  placeholder="e.g. Raw materials unavailable; Moodubidre kitchen at full capacity for tomorrow..."
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-500"
                 />
               </div>
@@ -1259,7 +1259,7 @@ export const OrdersPage: React.FC<OrdersPageProps> = ({
                   <div>
                     <span className="text-slate-400">Accepted By:</span>
                     <p className="font-semibold text-slate-800">
-                      {selectedOrderDetails.accepter_name || 'Main Branch'}
+                      {selectedOrderDetails.accepter_name || 'Moodubidre'}
                     </p>
                   </div>
                 )}

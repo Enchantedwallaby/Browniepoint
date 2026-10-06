@@ -370,7 +370,7 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
             Inter-Branch Stock Transfers
           </h2>
           <p className="text-sm text-slate-600 mt-0.5">
-            Main Branch dispatch, in-transit manifests, destination receipt approval, and FEFO inventory movements.
+            Moodubidre dispatch, in-transit manifests, destination receipt approval, and FEFO inventory movements.
           </p>
         </div>
 
@@ -433,7 +433,7 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
               }`}
             >
               <Send className="w-4 h-4" />
-              Dispatch Stock (Main Branch)
+              Dispatch Stock (Moodubidre)
               {dispatchCart.length > 0 && (
                 <span className="ml-1 px-2 py-0.5 text-xs bg-brand-700 text-white rounded-full font-bold">
                   {dispatchCart.length}
@@ -521,7 +521,7 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
               <Inbox className="w-10 h-10 text-slate-400 mx-auto mb-2" />
               <h3 className="text-base font-semibold text-slate-800">No Transfer Logs Found</h3>
               <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
-                Inter-branch stock transfers will appear here once dispatched from Main Branch.
+                Inter-branch stock transfers will appear here once dispatched from Moodubidre.
               </p>
             </Card>
           ) : (
@@ -624,7 +624,7 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
                   Source Branch Available FEFO Stock
                 </h3>
                 <span className="text-xs text-slate-500 font-medium">
-                  {mainBranch?.name || 'Main Branch'}
+                  {mainBranch?.name || 'Moodubidre'}
                 </span>
               </div>
 
@@ -643,7 +643,7 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
             {loadingSourceStock ? (
               <div className="bg-white p-12 rounded-xl border border-slate-200 text-center space-y-3">
                 <RefreshCw className="w-8 h-8 text-brand-700 animate-spin mx-auto" />
-                <p className="text-sm text-slate-600 font-medium">Loading Main Branch available stock...</p>
+                <p className="text-sm text-slate-600 font-medium">Loading Moodubidre available stock...</p>
               </div>
             ) : filteredSourceProducts.length === 0 ? (
               <div className="bg-white p-12 rounded-xl border border-dashed border-slate-300 text-center space-y-2">
@@ -753,7 +753,7 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
               <div className="py-12 text-center text-slate-400 space-y-2">
                 <Package className="w-10 h-10 mx-auto text-slate-300" />
                 <p className="text-sm font-medium text-slate-600">No items added to dispatch</p>
-                <p className="text-xs text-slate-400">Select available products from Main Branch stock on left.</p>
+                <p className="text-xs text-slate-400">Select available products from Moodubidre stock on left.</p>
               </div>
             ) : (
               <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1 divide-y divide-slate-100">

@@ -18,7 +18,7 @@ import type { RouteId } from '@/types/navigation';
 import { PERMITTED_ROUTES_BY_ROLE } from '@/types/navigation';
 
 export default function App() {
-  const { profile, assignedBranch, loading } = useAuth();
+  const { profile, assignedBranch, loading, authMessage } = useAuth();
   const [currentRoute, setCurrentRoute] = useState<RouteId>('dashboard');
 
   // Handle Hash-based Navigation if present
@@ -60,7 +60,7 @@ export default function App() {
 
   // 2. Unauthenticated -> show Login
   if (!profile) {
-    return <LoginPage />;
+    return <LoginPage notice={authMessage} />;
   }
 
   // 3. Deactivated profile -> show Deactivated screen
@@ -70,7 +70,7 @@ export default function App() {
         <div className="bg-white rounded-2xl shadow-xl p-8 max-w-sm w-full text-center space-y-4">
           <h2 className="text-lg font-semibold text-slate-800">Account Deactivated</h2>
           <p className="text-sm text-slate-600">
-            Your account has been deactivated. Please contact the Owner or Administrator.
+            Your login access has been disabled. Please contact the Owner.
           </p>
         </div>
       </div>

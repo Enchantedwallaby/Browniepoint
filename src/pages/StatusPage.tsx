@@ -33,7 +33,7 @@ export const StatusPage: React.FC = () => {
     {
       name: 'branches',
       description:
-        'Main Branch + 3 Sub-Branches (Initial seed ready)',
+        'Moodubidre, Alvas Vidayagiri, and Alvas Mijar',
     },
     {
       name: 'profiles',
@@ -314,12 +314,12 @@ export const StatusPage: React.FC = () => {
             <div className="flex items-center space-x-2 text-slate-800 font-medium">
               <GitBranch className="w-4 h-4 text-brand-700" />
 
-              <span>1 Main + 3 Sub-Branches</span>
+              <span>3 Branches</span>
             </div>
 
             <p>
-              Initial seed data contains Main Branch (MAIN) and Branch
-              1, Branch 2, Branch 3 (SUB_BRANCH).
+              Configured branches: Moodubidre (MAIN), Alvas Vidayagiri, and
+              Alvas Mijar (SUB_BRANCH).
             </p>
           </div>
         </Card>
