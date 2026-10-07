@@ -1,5 +1,11 @@
 import { supabase } from '@/lib/supabase';
-import type { ReturnReason, ReturnRequest } from '@/types/database';
+import type {
+  MainBranchSpoilageReason,
+  MainBranchSpoilageRecord,
+  ProductVariant,
+  ReturnReason,
+  ReturnRequest,
+} from '@/types/database';
 
 export interface ReturnRequestRecord extends ReturnRequest {
   branch?: { name: string; branch_code: string } | null;
@@ -9,6 +15,10 @@ export interface ReturnRequestRecord extends ReturnRequest {
     product?: { name: string } | null;
   } | null;
   batch?: { batch_number: string; expiry_date: string } | null;
+}
+
+export interface MainBranchSpoilageVariant extends Pick<ProductVariant, 'id' | 'name' | 'quantity_unit'> {
+  product: { name: string; active: boolean } | null;
 }
 
 export const returnService = {
@@ -62,5 +72,57 @@ export const returnService = {
     });
 
     if (error) throw error;
+  },
+
+  async listActiveSpoilageVariants(): Promise<MainBranchSpoilageVariant[]> {
+    const { data, error } = await supabase
+      .from('product_variants')
+      .select(`
+        id,
+        name,
+        quantity_unit,
+        product:products!product_variants_product_id_fkey(name, active)
+      `)
+      .eq('active', true)
+      .order('name');
+
+    if (error) throw error;
+    return ((data as unknown as MainBranchSpoilageVariant[]) || [])
+      .filter((variant) => variant.product?.active);
+  },
+
+  async listMainBranchSpoilageRecords(branchId: string): Promise<MainBranchSpoilageRecord[]> {
+    const { data, error } = await supabase
+      .from('main_branch_spoilage_records')
+      .select(`
+        *,
+        product_variant:product_variants!main_branch_spoilage_records_product_variant_id_fkey(
+          name,
+          quantity_unit,
+          product:products!product_variants_product_id_fkey(name)
+        )
+      `)
+      .eq('branch_id', branchId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    return (data as unknown as MainBranchSpoilageRecord[]) || [];
+  },
+
+  async recordMainBranchSpoilage(params: {
+    product_variant_id: string;
+    quantity: number;
+    reason: MainBranchSpoilageReason;
+    notes?: string;
+  }): Promise<string> {
+    const { data, error } = await supabase.rpc('record_main_branch_spoilage', {
+      p_product_variant_id: params.product_variant_id,
+      p_quantity: params.quantity,
+      p_reason: params.reason,
+      p_notes: params.notes?.trim() || null,
+    });
+
+    if (error) throw error;
+    return data as string;
   },
 };

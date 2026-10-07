@@ -4,7 +4,15 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { inventoryService } from '@/services/inventoryService';
 import { returnService, type ReturnRequestRecord } from '@/services/returnService';
-import type { Branch, FEFOInventoryRecord, Profile, ReturnReason, ReturnStatus } from '@/types/database';
+import type {
+  Branch,
+  FEFOInventoryRecord,
+  MainBranchSpoilageReason,
+  MainBranchSpoilageRecord,
+  Profile,
+  ReturnReason,
+  ReturnStatus,
+} from '@/types/database';
 import {
   AlertCircle,
   Check,
@@ -33,6 +41,13 @@ const reasonLabels: Record<ReturnReason, string> = {
   ADJUSTMENT: 'Other / Adjustment',
 };
 
+const spoilageReasonLabels: Record<MainBranchSpoilageReason, string> = {
+  SPOILED: 'Spoiled',
+  DAMAGED: 'Damaged',
+  EXPIRED: 'Expired',
+  OTHER: 'Other',
+};
+
 const statusVariants: Record<ReturnStatus, 'warning' | 'success' | 'danger'> = {
   PENDING: 'warning',
   APPROVED: 'success',
@@ -44,18 +59,29 @@ const formatQuantity = (quantity: number) =>
 
 export const ReturnsPage: React.FC<ReturnsPageProps> = ({ profile, assignedBranch }) => {
   const isBranchEmployee = profile?.role === 'BRANCH_EMPLOYEE';
+  const canRecordSpoilage = profile?.role === 'MAIN_BRANCH_EMPLOYEE' && assignedBranch?.branch_type === 'MAIN';
   const canReview = profile?.role === 'OWNER' || profile?.role === 'MAIN_BRANCH_EMPLOYEE';
 
   const [requests, setRequests] = useState<ReturnRequestRecord[]>([]);
   const [inventoryRecords, setInventoryRecords] = useState<FEFOInventoryRecord[]>([]);
+  const [spoilageRecords, setSpoilageRecords] = useState<MainBranchSpoilageRecord[]>([]);
+  const [spoilageVariants, setSpoilageVariants] = useState<Awaited<ReturnType<typeof returnService.listActiveSpoilageVariants>>>([]);
   const [loadedScope, setLoadedScope] = useState<string | null>(null);
+  const [loadedSpoilageScope, setLoadedSpoilageScope] = useState<string | null>(null);
   const [loadingInventory, setLoadingInventory] = useState(false);
+  const [loadingSpoilageVariants, setLoadingSpoilageVariants] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [selectedInventoryId, setSelectedInventoryId] = useState('');
+  const [showSpoilageForm, setShowSpoilageForm] = useState(false);
+  const [selectedSpoilageVariantId, setSelectedSpoilageVariantId] = useState('');
+  const [spoilageQuantity, setSpoilageQuantity] = useState('1');
+  const [spoilageReason, setSpoilageReason] = useState<MainBranchSpoilageReason>('SPOILED');
+  const [spoilageNotes, setSpoilageNotes] = useState('');
+  const [submittingSpoilage, setSubmittingSpoilage] = useState(false);
   const [quantity, setQuantity] = useState('1');
   const [reason, setReason] = useState<ReturnReason>('RETURN_TO_MAIN');
   const [notes, setNotes] = useState('');
@@ -66,7 +92,9 @@ export const ReturnsPage: React.FC<ReturnsPageProps> = ({ profile, assignedBranc
 
   const branchId = assignedBranch?.id;
   const requestScope = `${profile?.role || 'anonymous'}:${branchId || 'unassigned'}`;
+  const spoilageScope = `${canRecordSpoilage ? 'main' : 'other'}:${branchId || 'unassigned'}`;
   const loading = loadedScope !== requestScope;
+  const loadingSpoilage = canRecordSpoilage && loadedSpoilageScope !== spoilageScope;
   const selectedInventory = inventoryRecords.find((record) => record.inventory_id === selectedInventoryId);
 
   useEffect(() => {
@@ -123,6 +151,56 @@ export const ReturnsPage: React.FC<ReturnsPageProps> = ({ profile, assignedBranc
     };
   }, [isBranchEmployee, branchId]);
 
+  useEffect(() => {
+    if (!canRecordSpoilage || !branchId) return;
+    let active = true;
+
+    async function loadSpoilageVariants() {
+      setLoadingSpoilageVariants(true);
+      try {
+        const data = await returnService.listActiveSpoilageVariants();
+        if (active) {
+          setSpoilageVariants(data);
+          setSelectedSpoilageVariantId((current) => current || data[0]?.id || '');
+        }
+      } catch (error) {
+        if (active) setFormError(error instanceof Error ? error.message : 'Could not load products for spoilage recording.');
+      } finally {
+        if (active) setLoadingSpoilageVariants(false);
+      }
+    }
+
+    void loadSpoilageVariants();
+    return () => {
+      active = false;
+    };
+  }, [canRecordSpoilage, branchId]);
+
+  useEffect(() => {
+    if (!canRecordSpoilage || !branchId) return;
+    const spoilageBranchId = branchId;
+    let active = true;
+
+    async function loadSpoilageRecords() {
+      try {
+        const data = await returnService.listMainBranchSpoilageRecords(spoilageBranchId);
+        if (active) {
+          setSpoilageRecords(data);
+          setPageError(null);
+        }
+      } catch (error) {
+        if (active) setPageError(error instanceof Error ? error.message : 'Could not load Main Branch spoilage records.');
+      } finally {
+        if (active) setLoadedSpoilageScope(spoilageScope);
+      }
+    }
+
+    void loadSpoilageRecords();
+    return () => {
+      active = false;
+    };
+  }, [canRecordSpoilage, branchId, spoilageScope]);
+
   const visibleRequests = useMemo(
     () => statusFilter === 'ALL' ? requests : requests.filter((request) => request.status === statusFilter),
     [requests, statusFilter]
@@ -138,6 +216,12 @@ export const ReturnsPage: React.FC<ReturnsPageProps> = ({ profile, assignedBranc
   const refreshRequests = async () => {
     const data = await returnService.listReturnRequests();
     setRequests(data);
+  };
+
+  const refreshSpoilageRecords = async () => {
+    if (!branchId) return;
+    const data = await returnService.listMainBranchSpoilageRecords(branchId);
+    setSpoilageRecords(data);
   };
 
   const handleCreateRequest = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -181,6 +265,46 @@ export const ReturnsPage: React.FC<ReturnsPageProps> = ({ profile, assignedBranc
     }
   };
 
+  const handleRecordSpoilage = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const recordedQuantity = Number(spoilageQuantity);
+
+    if (!selectedSpoilageVariantId) {
+      setFormError('Select a product variant.');
+      return;
+    }
+    if (!Number.isFinite(recordedQuantity) || recordedQuantity <= 0) {
+      setFormError('Enter a quantity greater than zero.');
+      return;
+    }
+
+    setSubmittingSpoilage(true);
+    setFormError(null);
+    setPageError(null);
+    setSuccessMessage(null);
+    try {
+      await returnService.recordMainBranchSpoilage({
+        product_variant_id: selectedSpoilageVariantId,
+        quantity: recordedQuantity,
+        reason: spoilageReason,
+        notes: spoilageNotes,
+      });
+      setShowSpoilageForm(false);
+      setSpoilageNotes('');
+      setSpoilageQuantity('1');
+      setSuccessMessage('Main Branch production loss recorded.');
+      try {
+        await refreshSpoilageRecords();
+      } catch {
+        setPageError('The spoilage record was saved, but its history could not be refreshed.');
+      }
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Could not record Main Branch spoilage.');
+    } finally {
+      setSubmittingSpoilage(false);
+    }
+  };
+
   const handleReview = async (requestId: string, approve: boolean, rejection?: string) => {
     setProcessingId(requestId);
     setPageError(null);
@@ -214,18 +338,25 @@ export const ReturnsPage: React.FC<ReturnsPageProps> = ({ profile, assignedBranc
         <div>
           <h2 className="flex items-center gap-2 text-2xl font-bold text-slate-900">
             <RotateCcw className="h-6 w-6 text-brand-700" />
-            Returns &amp; Stock Adjustments
+            {canRecordSpoilage ? 'Production Loss & Returns' : 'Returns & Stock Adjustments'}
           </h2>
           <p className="mt-1 text-sm text-slate-600">
-            Submit branch stock returns and review their processing status.
+            {canRecordSpoilage
+              ? 'Record Main Branch production spoilage without changing inventory.'
+              : 'Submit branch stock returns and review their processing status.'}
           </p>
         </div>
-        {isBranchEmployee && (
+        {isBranchEmployee ? (
           <Button onClick={() => { setShowCreateForm((open) => !open); setFormError(null); }}>
             {showCreateForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
             {showCreateForm ? 'Close form' : 'Create Return'}
           </Button>
-        )}
+        ) : canRecordSpoilage ? (
+          <Button onClick={() => { setShowSpoilageForm((open) => !open); setFormError(null); }}>
+            {showSpoilageForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+            {showSpoilageForm ? 'Close form' : 'Record Spoilage'}
+          </Button>
+        ) : null}
       </div>
 
       {successMessage && (
@@ -331,6 +462,96 @@ export const ReturnsPage: React.FC<ReturnsPageProps> = ({ profile, assignedBranc
               <Button type="submit" disabled={submitting || loadingInventory || !selectedInventory}>
                 {submitting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                 Submit request
+              </Button>
+            </div>
+          </form>
+        </Card>
+      )}
+
+      {showSpoilageForm && canRecordSpoilage && (
+        <Card className="p-4 sm:p-6">
+          <form onSubmit={handleRecordSpoilage} className="space-y-4">
+            <div className="flex items-center gap-2">
+              <PackageCheck className="h-5 w-5 text-brand-700" />
+              <h3 className="text-base font-semibold text-slate-900">Record Main Branch production loss</h3>
+              {assignedBranch && <span className="text-xs text-slate-500">{assignedBranch.name}</span>}
+            </div>
+
+            {formError && (
+              <div role="alert" className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{formError}</span>
+              </div>
+            )}
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block text-sm font-medium text-slate-700 sm:col-span-2">
+                Product / Variant
+                <select
+                  required
+                  value={selectedSpoilageVariantId}
+                  disabled={loadingSpoilageVariants || spoilageVariants.length === 0}
+                  onChange={(event) => setSelectedSpoilageVariantId(event.target.value)}
+                  className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                >
+                  {spoilageVariants.length === 0 && <option value="">No active product variants</option>}
+                  {spoilageVariants.map((variant) => (
+                    <option key={variant.id} value={variant.id}>
+                      {variant.product?.name || 'Product'} / {variant.name}
+                    </option>
+                  ))}
+                </select>
+                {loadingSpoilageVariants && <span className="mt-1 block text-xs text-slate-500">Loading products…</span>}
+              </label>
+
+              <label className="block text-sm font-medium text-slate-700">
+                Quantity
+                <input
+                  required
+                  type="number"
+                  inputMode="decimal"
+                  min="0.001"
+                  step="any"
+                  value={spoilageQuantity}
+                  onChange={(event) => setSpoilageQuantity(event.target.value)}
+                  className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                />
+              </label>
+
+              <label className="block text-sm font-medium text-slate-700">
+                Reason
+                <select
+                  value={spoilageReason}
+                  onChange={(event) => setSpoilageReason(event.target.value as MainBranchSpoilageReason)}
+                  className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                >
+                  <option value="SPOILED">Spoiled</option>
+                  <option value="DAMAGED">Damaged</option>
+                  <option value="EXPIRED">Expired</option>
+                  <option value="OTHER">Other</option>
+                </select>
+              </label>
+
+              <label className="block text-sm font-medium text-slate-700 sm:col-span-2">
+                Notes <span className="font-normal text-slate-500">(optional)</span>
+                <textarea
+                  rows={3}
+                  maxLength={1000}
+                  value={spoilageNotes}
+                  onChange={(event) => setSpoilageNotes(event.target.value)}
+                  className="mt-1 block w-full resize-y rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                />
+              </label>
+            </div>
+
+            <p className="text-xs text-slate-500">
+              This records production loss only. No Main Branch inventory is checked or changed.
+            </p>
+            <div className="flex flex-col-reverse gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:justify-end">
+              <Button type="button" variant="outline" onClick={() => setShowSpoilageForm(false)}>Cancel</Button>
+              <Button type="submit" disabled={submittingSpoilage || loadingSpoilageVariants || !selectedSpoilageVariantId}>
+                {submittingSpoilage ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                Record Spoilage
               </Button>
             </div>
           </form>
@@ -454,6 +675,57 @@ export const ReturnsPage: React.FC<ReturnsPageProps> = ({ profile, assignedBranc
             );
           })}
         </div>
+      )}
+
+      {canRecordSpoilage && (
+        <section className="space-y-3" aria-labelledby="main-spoilage-history-heading">
+          <div>
+            <h3 id="main-spoilage-history-heading" className="text-lg font-semibold text-slate-900">
+              Main Branch spoilage history
+            </h3>
+            <p className="text-sm text-slate-500">Production loss records; these do not affect inventory.</p>
+          </div>
+          {loadingSpoilage ? (
+            <Card className="flex items-center justify-center gap-2 p-8 text-sm text-slate-500">
+              <RefreshCw className="h-4 w-4 animate-spin" /> Loading spoilage history…
+            </Card>
+          ) : spoilageRecords.length === 0 ? (
+            <Card className="border-2 border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-500">
+              No Main Branch spoilage records yet.
+            </Card>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+              <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-4 py-3 font-medium">Date</th>
+                    <th className="px-4 py-3 font-medium">Product / Variant</th>
+                    <th className="px-4 py-3 font-medium">Quantity</th>
+                    <th className="px-4 py-3 font-medium">Reason</th>
+                    <th className="px-4 py-3 font-medium">Employee</th>
+                    <th className="px-4 py-3 font-medium">Notes</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {spoilageRecords.map((record) => (
+                    <tr key={record.id}>
+                      <td className="whitespace-nowrap px-4 py-3">{new Date(record.created_at).toLocaleString()}</td>
+                      <td className="px-4 py-3">
+                        {record.product_variant?.product?.name || 'Product'} / {record.product_variant?.name || 'Variant'}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3">
+                        {formatQuantity(record.quantity)}{record.product_variant?.quantity_unit ? ` ${record.product_variant.quantity_unit}` : ''}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3">{spoilageReasonLabels[record.reason]}</td>
+                      <td className="whitespace-nowrap px-4 py-3">{record.recorded_by_name}</td>
+                      <td className="max-w-xs whitespace-pre-wrap break-words px-4 py-3">{record.notes || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       )}
     </div>
   );

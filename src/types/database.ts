@@ -69,6 +69,8 @@ export type ReturnStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
 export type ReturnReason = 'RETURN_TO_MAIN' | 'EXPIRED' | 'DAMAGED' | 'ADJUSTMENT';
 
+export type MainBranchSpoilageReason = 'SPOILED' | 'DAMAGED' | 'EXPIRED' | 'OTHER';
+
 // ----------------------------------------------------------------
 // TABLE INTERFACES
 // ----------------------------------------------------------------
@@ -182,6 +184,23 @@ export interface ReturnRequest {
   reviewed_by: string | null;
   reviewed_at: string | null;
   created_at: string;
+}
+
+export interface MainBranchSpoilageRecord {
+  id: string;
+  branch_id: string;
+  product_variant_id: string;
+  quantity: number;
+  reason: MainBranchSpoilageReason;
+  notes: string | null;
+  created_by: string;
+  recorded_by_name: string;
+  created_at: string;
+  product_variant?: {
+    name: string;
+    quantity_unit: QuantityUnit;
+    product?: { name: string } | null;
+  } | null;
 }
 
 /**
