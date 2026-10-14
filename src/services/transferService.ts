@@ -70,6 +70,140 @@ export interface StockTransferDetailed {
   items: StockTransferItemDetailed[];
 }
 
+/**
+ * Parses a date or timestamp string into a millisecond timestamp.
+ * Normalizes YYYY-MM-DD date-only strings to either midnight (start of day)
+ * or 23:59:59.999 (end of day).
+ */
+function parseTimestamp(val: string | null | undefined, isEndOfDay = false): number {
+  if (!val) return isEndOfDay ? Infinity : -Infinity;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
+    return new Date(`${val}T${isEndOfDay ? '23:59:59.999Z' : '00:00:00.000Z'}`).getTime();
+  }
+  return new Date(val).getTime();
+}
+
+/**
+ * Resolves the applicable unit price from a variant's pricing rules for a given reference time.
+ *
+ * Requirements:
+ * 1. For historical dispatches, selects the pricing rule whose effective date range covers
+ *    the selected dispatch timestamp, even if that rule is now inactive because it was superseded.
+ * 2. For current dispatches, strictly preserves the existing current-price behavior (only active rules).
+ * 3. Never uses the current price as a historical fallback unless data proves it was valid on the selected date.
+ * 4. Never invents a price; returns null ("Unavailable") if valid pricing cannot be established.
+ */
+export function resolvePricingRuleUnitPrice(
+  pricingRules: any[] | undefined,
+  refTime: number,
+  isHistorical: boolean
+): number | null {
+  if (!pricingRules || pricingRules.length === 0) {
+    return null;
+  }
+
+  // Current dispatches: strictly preserve existing current-price behavior (active rules only)
+  if (!isHistorical) {
+    const activeRules = pricingRules
+      .filter((r: any) => {
+        if (!r.active || r.base_price === null || r.base_price === undefined) {
+          return false;
+        }
+        if (r.effective_from) {
+          const fromTime = new Date(r.effective_from).getTime();
+          if (!isNaN(fromTime) && fromTime > refTime) {
+            return false;
+          }
+        }
+        if (r.effective_to) {
+          const toTime = new Date(r.effective_to).getTime();
+          if (!isNaN(toTime) && toTime < refTime) {
+            return false;
+          }
+        }
+        return true;
+      })
+      .sort(
+        (a: any, b: any) =>
+          new Date(b.effective_from || 0).getTime() - new Date(a.effective_from || 0).getTime()
+      );
+
+    return activeRules.length > 0 && !isNaN(Number(activeRules[0].base_price))
+      ? Number(activeRules[0].base_price)
+      : null;
+  }
+
+  // Historical dispatches: resolve rule whose effective date range covered refTime
+  const validRules = pricingRules.filter(
+    (r: any) =>
+      r &&
+      r.base_price !== null &&
+      r.base_price !== undefined &&
+      !isNaN(Number(r.base_price))
+  );
+
+  if (validRules.length === 0) {
+    return null;
+  }
+
+  // Sort chronologically (oldest first) to establish temporal succession
+  const sortedRules = [...validRules].sort((a: any, b: any) => {
+    const timeA = new Date(a.effective_from || a.created_at || 0).getTime();
+    const timeB = new Date(b.effective_from || b.created_at || 0).getTime();
+    if (timeA !== timeB) return timeA - timeB;
+    const createdA = new Date(a.created_at || 0).getTime();
+    const createdB = new Date(b.created_at || 0).getTime();
+    if (createdA !== createdB) return createdA - createdB;
+    if (a.active !== b.active) return a.active ? 1 : -1;
+    return 0;
+  });
+
+  let matchedHistoricalRule: any = null;
+
+  for (let i = 0; i < sortedRules.length; i++) {
+    const rule = sortedRules[i];
+    const fromTime = parseTimestamp(rule.effective_from || rule.created_at, false);
+    if (isNaN(fromTime) || fromTime > refTime) {
+      // Started after refTime; could not have covered refTime
+      continue;
+    }
+
+    let effectiveUntil = Infinity;
+
+    // Explicit end date takes precedence if set
+    if (rule.effective_to) {
+      const toTime = parseTimestamp(rule.effective_to, true);
+      if (!isNaN(toTime)) {
+        effectiveUntil = Math.min(effectiveUntil, toTime);
+      }
+    }
+
+    // If superseded by a later rule, this rule was effective until the successor took effect
+    if (i + 1 < sortedRules.length) {
+      const nextRule = sortedRules[i + 1];
+      const nextFromTime = parseTimestamp(nextRule.effective_from || nextRule.created_at, false);
+      if (!isNaN(nextFromTime)) {
+        effectiveUntil = Math.min(effectiveUntil, nextFromTime);
+      }
+    } else if (!rule.active) {
+      // Inactive rule with no successor was deactivated at updated_at
+      const deactivatedAt = rule.updated_at ? parseTimestamp(rule.updated_at, true) : NaN;
+      if (!isNaN(deactivatedAt)) {
+        effectiveUntil = Math.min(effectiveUntil, deactivatedAt);
+      }
+    }
+
+    // refTime must fall within the rule's active window
+    if (refTime >= fromTime && refTime <= effectiveUntil) {
+      matchedHistoricalRule = rule;
+    }
+  }
+
+  return matchedHistoricalRule && !isNaN(Number(matchedHistoricalRule.base_price))
+    ? Number(matchedHistoricalRule.base_price)
+    : null;
+}
+
 export const transferService = {
   /**
    * Dispatch a Stock Transfer strictly via atomic PostgreSQL RPC (`public.create_stock_transfer`).
@@ -167,7 +301,7 @@ export const transferService = {
             id,
             name,
             product:products ( name ),
-            pricing_rules ( id, pricing_type, base_price, active, effective_from, effective_to )
+            pricing_rules ( id, pricing_type, base_price, active, effective_from, effective_to, created_at, updated_at )
           ),
           batch:product_batches ( batch_number, expiry_date )
         )
@@ -207,6 +341,12 @@ export const transferService = {
           new Date(row.created_at).toISOString().split('T')[0]
         : false) || (typeof row.notes === 'string' && row.notes.includes('[BACKDATED'));
 
+      const isHistorical = isBackdated || (
+        Boolean(row.dispatched_at) &&
+        !isNaN(new Date(row.dispatched_at).getTime()) &&
+        new Date(row.dispatched_at).toISOString().split('T')[0] < new Date().toISOString().split('T')[0]
+      );
+
       return {
         id: row.id,
         transfer_number: row.transfer_number,
@@ -227,34 +367,11 @@ export const transferService = {
         received_by_name: row.receiver?.full_name,
         is_backdated: isBackdated,
         items: (row.stock_transfer_items || []).map((sti: any) => {
-          const activeRules = (sti.variant?.pricing_rules || [])
-            .filter((r: any) => {
-              if (!r.active || r.base_price === null || r.base_price === undefined) {
-                return false;
-              }
-              if (r.effective_from) {
-                const fromTime = new Date(r.effective_from).getTime();
-                if (!isNaN(fromTime) && fromTime > refTime) {
-                  return false;
-                }
-              }
-              if (r.effective_to) {
-                const toTime = new Date(r.effective_to).getTime();
-                if (!isNaN(toTime) && toTime < refTime) {
-                  return false;
-                }
-              }
-              return true;
-            })
-            .sort(
-              (a: any, b: any) =>
-                new Date(b.effective_from || 0).getTime() - new Date(a.effective_from || 0).getTime()
-            );
-
-          const unitPrice =
-            activeRules.length > 0 && !isNaN(Number(activeRules[0].base_price))
-              ? Number(activeRules[0].base_price)
-              : null;
+          const unitPrice = resolvePricingRuleUnitPrice(
+            sti.variant?.pricing_rules,
+            refTime,
+            isHistorical
+          );
 
           return {
             id: sti.id,

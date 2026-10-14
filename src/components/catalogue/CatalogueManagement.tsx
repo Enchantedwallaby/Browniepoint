@@ -14,6 +14,7 @@ import {
   DollarSign,
   Info,
   Pencil,
+  Gift,
 } from 'lucide-react';
 import type {
   Profile,
@@ -95,10 +96,14 @@ export const CatalogueManagement: React.FC<CatalogueManagementProps> = ({
 
   // Form states - Variant
   const [varName, setVarName] = useState('');
-  const [varQtyVal, setVarQtyVal] = useState<number>(0.5);
+  const [varQtyVal, setVarQtyVal] = useState<string | number>('0.5');
   const [varQtyUnit, setVarQtyUnit] = useState<QuantityUnit>('HALF_KG');
   const [varPricingType, setVarPricingType] = useState<PricingType>('WEIGHT_VARIANT');
   const [varPrice, setVarPrice] = useState<string>('');
+  const [variantModalError, setVariantModalError] = useState<string | null>(null);
+
+  const isPieceBased = varQtyUnit === 'PIECE' || varQtyUnit === 'BOX';
+  const isWeightBased = varQtyUnit === 'HALF_KG' || varQtyUnit === 'KG';
 
   const fetchProducts = async () => {
     setLoading(true);
@@ -214,15 +219,104 @@ export const CatalogueManagement: React.FC<CatalogueManagementProps> = ({
     }
   };
 
+// Handler to open Add Variant modal (existing behavior)
+  const openAddVariantModal = (p: ProductWithVariants) => {
+    setShowAddVariant(p);
+    setVariantModalError(null);
+    setVarName('');
+    setVarPrice('');
+
+    const isCake = p.category === 'Cakes';
+    if (isCake) {
+      setVarQtyVal('0.5');
+      setVarQtyUnit('HALF_KG');
+      setVarPricingType('WEIGHT_VARIANT');
+    } else {
+      setVarQtyVal('1');
+      setVarQtyUnit('PIECE');
+      setVarPricingType('FIXED_PER_UNIT');
+    }
+  };
+
+  // New handler for Add Pastry (piece-based variant)
+  const openAddPastryModal = (p: ProductWithVariants) => {
+    // Only for cake products
+    if (p.category !== 'Cakes') return;
+    setShowAddVariant(p);
+    setVariantModalError(null);
+    // Pre-fill pastry specifics
+    const defaultName = `${p.name} Pastry`;
+    setVarName(defaultName);
+    setVarPrice('');
+    setVarQtyVal('1');
+    setVarQtyUnit('PIECE');
+    setVarPricingType('FIXED_PER_UNIT');
+  };
+  const handleUnitChange = (unit: QuantityUnit) => {
+    setVarQtyUnit(unit);
+    if (unit === 'PIECE' || unit === 'BOX') {
+      setVarQtyVal('1');
+      if (varPricingType === 'WEIGHT_VARIANT') {
+        setVarPricingType('FIXED_PER_UNIT');
+      }
+    } else if (unit === 'HALF_KG') {
+      setVarQtyVal('0.5');
+      setVarPricingType('WEIGHT_VARIANT');
+    } else if (unit === 'KG') {
+      setVarQtyVal('1');
+      setVarPricingType('WEIGHT_VARIANT');
+    } else if (unit === 'GRAM') {
+      setVarQtyVal('100');
+    }
+  };
+
   const handleCreateVariant = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!showAddVariant || !varName.trim() || !isOwner) return;
+    setVariantModalError(null);
+    if (!showAddVariant || !isOwner) return;
 
+    if (!varName.trim()) {
+      setVariantModalError('Variant name is required.');
+      return;
+    }
+
+    const qty = Number(varQtyVal);
+    if (isNaN(qty) || qty <= 0) {
+      setVariantModalError('Quantity value must be a valid number greater than 0.');
+      return;
+    }
+
+    if (isPieceBased) {
+      if (!Number.isInteger(qty) || qty < 1) {
+        setVariantModalError('Piece-based variants must have a whole number quantity of at least 1.');
+        return;
+      }
+    } else if (isWeightBased) {
+      if (qty <= 0) {
+        setVariantModalError('Weight-based cake variants must have a weight quantity greater than 0 kg.');
+        return;
+      }
+    } else if (varQtyUnit === 'GRAM') {
+      if (!Number.isInteger(qty) || qty < 1) {
+        setVariantModalError('Gram-based variants must have a whole number quantity of at least 1 g.');
+        return;
+      }
+    }
+
+    if (varPricingType !== 'CUSTOM') {
+      const price = Number(varPrice);
+      if (isNaN(price) || price < 0 || varPrice === '') {
+        setVariantModalError('Standard menu price must be a valid non-negative number.');
+        return;
+      }
+    }
+
+    setSubmitting(true);
     try {
       await productService.createVariant({
         product_id: showAddVariant.id,
         name: varName.trim(),
-        quantity_value: Number(varQtyVal) || 1,
+        quantity_value: qty,
         quantity_unit: varQtyUnit,
         pricing_type: varPricingType,
         base_price: varPricingType === 'CUSTOM' ? null : Number(varPrice) || 0,
@@ -231,8 +325,15 @@ export const CatalogueManagement: React.FC<CatalogueManagementProps> = ({
       setVarName('');
       setVarPrice('');
       fetchProducts();
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('Error adding variant:', err);
+      const msg =
+        err && typeof err === 'object' && 'message' in err
+          ? String((err as { message: string }).message)
+          : 'Failed to create variant.';
+      setVariantModalError(msg);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -491,12 +592,22 @@ export const CatalogueManagement: React.FC<CatalogueManagementProps> = ({
                       <span>Edit Product</span>
                     </button>
                     <button
-                      onClick={() => setShowAddVariant(p)}
+                      onClick={() => openAddVariantModal(p)}
                       className="text-xs font-semibold text-brand-700 hover:text-brand-900 inline-flex items-center gap-1"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>Add Variant</span>
                     </button>
+                    {p.category === 'Cakes' && (
+                      <button
+                        onClick={() => openAddPastryModal(p)}
+                        className="text-xs font-semibold text-pink-600 hover:text-pink-900 inline-flex items-center gap-1"
+                      >
+                        <Gift className="w-3.5 h-3.5" />
+                        <span>Add Pastry</span>
+                      </button>
+                    )}
+
                   </div>
                 )}
               </Card>
@@ -774,6 +885,19 @@ export const CatalogueManagement: React.FC<CatalogueManagementProps> = ({
               <p className="text-xs text-slate-500">Configure size, unit, and standard menu pricing.</p>
             </div>
 
+            {variantModalError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700 flex items-center justify-between">
+                <span>{variantModalError}</span>
+                <button
+                  type="button"
+                  onClick={() => setVariantModalError(null)}
+                  className="font-bold text-slate-400 hover:text-slate-600"
+                >
+                  ×
+                </button>
+              </div>
+            )}
+
             <form onSubmit={handleCreateVariant} className="space-y-3">
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">Variant Name</label>
@@ -789,23 +913,33 @@ export const CatalogueManagement: React.FC<CatalogueManagementProps> = ({
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">Quantity Value</label>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    Quantity Value {isPieceBased ? '(Pieces)' : isWeightBased ? '(KG)' : varQtyUnit === 'GRAM' ? '(Grams)' : ''}
+                  </label>
                   <input
                     type="number"
-                    step="0.1"
-                    min="0.01"
+                    step={isPieceBased || varQtyUnit === 'GRAM' ? '1' : 'any'}
+                    min={isPieceBased || varQtyUnit === 'GRAM' ? '1' : '0.01'}
                     required
                     value={varQtyVal}
-                    onChange={(e) => setVarQtyVal(parseFloat(e.target.value))}
+                    onChange={(e) => setVarQtyVal(e.target.value)}
+                    placeholder={isPieceBased ? '1' : '0.5'}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    {isPieceBased
+                      ? 'Whole number (e.g. 1, 2, 6)'
+                      : varQtyUnit === 'GRAM'
+                      ? 'Whole grams (e.g. 100, 250, 500)'
+                      : 'Weight in kg (e.g. 0.5, 1, 1.5)'}
+                  </p>
                 </div>
 
                 <div>
                   <label className="block text-xs font-medium text-slate-700 mb-1">Unit</label>
                   <select
                     value={varQtyUnit}
-                    onChange={(e) => setVarQtyUnit(e.target.value as QuantityUnit)}
+                    onChange={(e) => handleUnitChange(e.target.value as QuantityUnit)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
                   >
                     {QUANTITY_UNITS.map((u) => (
@@ -853,11 +987,19 @@ export const CatalogueManagement: React.FC<CatalogueManagementProps> = ({
               )}
 
               <div className="flex justify-end space-x-2 pt-2">
-                <Button variant="outline" type="button" onClick={() => setShowAddVariant(null)}>
+                <Button
+                  variant="outline"
+                  type="button"
+                  onClick={() => {
+                    setShowAddVariant(null);
+                    setVariantModalError(null);
+                  }}
+                  disabled={submitting}
+                >
                   Cancel
                 </Button>
-                <Button variant="primary" type="submit">
-                  Save Variant
+                <Button variant="primary" type="submit" disabled={submitting}>
+                  {submitting ? 'Saving...' : 'Save Variant'}
                 </Button>
               </div>
             </form>

@@ -179,6 +179,7 @@ export const productService = {
     quantity_unit: QuantityUnit;
     pricing_type: PricingType;
     base_price: number | null;
+    active?: boolean;
   }): Promise<ProductVariant> {
     // 1. Insert variant
     const { data: variant, error: vErr } = await supabase
@@ -188,7 +189,7 @@ export const productService = {
         name: params.name,
         quantity_value: params.quantity_value,
         quantity_unit: params.quantity_unit,
-        active: true,
+        active: params.active ?? true,
       })
       .select('*')
       .single();
@@ -203,7 +204,7 @@ export const productService = {
       product_variant_id: variant.id,
       pricing_type: params.pricing_type,
       base_price: params.pricing_type === 'CUSTOM' ? null : params.base_price,
-      active: true,
+      active: params.active ?? true,
     });
 
     if (prErr) {
@@ -212,6 +213,47 @@ export const productService = {
     }
 
     return variant;
+  },
+
+  async updateVariant(params: {
+    variant_id: string;
+    name?: string;
+    quantity_value?: number;
+    quantity_unit?: QuantityUnit;
+    active?: boolean;
+    base_price?: number | null;
+  }): Promise<void> {
+    const updates: {
+      name?: string;
+      quantity_value?: number;
+      quantity_unit?: QuantityUnit;
+      active?: boolean;
+    } = {};
+
+    if (params.name !== undefined) updates.name = params.name;
+    if (params.quantity_value !== undefined) updates.quantity_value = params.quantity_value;
+    if (params.quantity_unit !== undefined) updates.quantity_unit = params.quantity_unit;
+    if (params.active !== undefined) updates.active = params.active;
+
+    if (Object.keys(updates).length > 0) {
+      const { error: vErr } = await supabase
+        .from('product_variants')
+        .update(updates)
+        .eq('id', params.variant_id);
+
+      if (vErr) {
+        console.error('Error updating variant:', vErr);
+        throw vErr;
+      }
+    }
+
+    if (params.base_price !== undefined) {
+      await this.setVariantPricing({
+        variant_id: params.variant_id,
+        pricing_type: 'FIXED_PER_UNIT',
+        base_price: params.base_price,
+      });
+    }
   },
 
   async setVariantPricing(params: {
