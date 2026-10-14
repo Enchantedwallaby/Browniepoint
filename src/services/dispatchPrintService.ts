@@ -10,6 +10,10 @@ interface TransferTotalsSummary {
   hasCakesWithWeight: boolean;
   totalWeightKg: number;
   unitSummaryText: string;
+  totalDispatchedValue: number;
+  hasMissingPrices: boolean;
+  missingPricesCount: number;
+  pricedLinesCount: number;
 }
 
 function computeTransferTotals(transfer: StockTransferDetailed): TransferTotalsSummary {
@@ -18,6 +22,9 @@ function computeTransferTotals(transfer: StockTransferDetailed): TransferTotalsS
   let totalReceivedQty = transfer.status === 'RECEIVED' ? 0 : null;
   let totalWeightKg = 0;
   let hasCakesWithWeight = false;
+  let totalDispatchedValue = 0;
+  let missingPricesCount = 0;
+  let pricedLinesCount = 0;
 
   for (const item of transfer.items) {
     const dQty = Number(item.quantity_dispatched) || 0;
@@ -28,6 +35,13 @@ function computeTransferTotals(transfer: StockTransferDetailed): TransferTotalsS
     totalDispatchedQty += dQty;
     if (totalReceivedQty !== null) {
       totalReceivedQty += rQty;
+    }
+
+    if (typeof item.unit_price === 'number' && !isNaN(item.unit_price) && item.unit_price >= 0) {
+      totalDispatchedValue += dQty * item.unit_price;
+      pricedLinesCount++;
+    } else {
+      missingPricesCount++;
     }
 
     // Detect weight variants (e.g., "0.5 kg", "1 kg", "1.5 kg", "2 kg", "500g")
@@ -60,6 +74,10 @@ function computeTransferTotals(transfer: StockTransferDetailed): TransferTotalsS
     hasCakesWithWeight,
     totalWeightKg,
     unitSummaryText,
+    totalDispatchedValue,
+    hasMissingPrices: missingPricesCount > 0,
+    missingPricesCount,
+    pricedLinesCount,
   };
 }
 
@@ -104,12 +122,22 @@ export function generateDispatchHtml(transfer: StockTransferDetailed): string {
   const rowsHtml = transfer.items
     .map((item, index) => {
       const receivedCol = isReceived
-        ? `<td class="text-right font-bold text-emerald">${item.quantity_received ?? item.quantity_dispatched}</td>`
+        ? `<td class="text-right font-bold text-emerald font-mono">${item.quantity_received ?? item.quantity_dispatched}</td>`
         : '';
 
       const variantDisplay = item.variant_name && item.variant_name !== 'Standard'
         ? escapeHtml(item.variant_name)
         : '<span class="text-muted">Standard</span>';
+
+      const hasPrice = typeof item.unit_price === 'number' && !isNaN(item.unit_price) && item.unit_price >= 0;
+      const unitPriceDisplay = hasPrice
+        ? `₹${item.unit_price!.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        : '<span class="price-unavailable">Unavailable</span>';
+
+      const lineTotal = hasPrice ? item.quantity_dispatched * item.unit_price! : null;
+      const lineTotalDisplay = lineTotal !== null
+        ? `₹${lineTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        : '<span class="price-unavailable text-muted">—</span>';
 
       return `
         <tr>
@@ -117,16 +145,43 @@ export function generateDispatchHtml(transfer: StockTransferDetailed): string {
           <td class="font-bold text-dark">${escapeHtml(item.product_name || 'Item')}</td>
           <td>${variantDisplay}</td>
           <td class="font-mono text-center text-batch">${escapeHtml(item.batch_number || 'N/A')}</td>
-          <td class="text-right font-bold text-dark">${item.quantity_dispatched}</td>
+          <td class="text-right font-bold text-dark font-mono">${item.quantity_dispatched}</td>
           ${receivedCol}
+          <td class="text-right font-mono text-dark">${unitPriceDisplay}</td>
+          <td class="text-right font-bold font-mono text-dark">${lineTotalDisplay}</td>
         </tr>
       `;
     })
     .join('');
 
-  const receivedHeader = isReceived ? '<th class="text-right" style="width: 75px;">Received Qty</th>' : '';
+  const receivedHeader = isReceived ? '<th class="text-right" style="width: 65px;">Received Qty</th>' : '';
   const receivedFooter = isReceived
-    ? `<td class="text-right font-bold text-emerald">${totals.totalReceivedQty}</td>`
+    ? `<td class="text-right font-bold text-emerald font-mono">${totals.totalReceivedQty}</td>`
+    : '';
+
+  const grandTotalFooterHtml = totals.hasMissingPrices
+    ? totals.pricedLinesCount > 0
+      ? `<span class="price-warning font-mono" title="${totals.missingPricesCount} item(s) unpriced">₹${totals.totalDispatchedValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}*</span>`
+      : '<span class="price-unavailable" style="font-size: 8pt;">Unavailable</span>'
+    : `<span class="font-mono text-dark" style="font-size: 9.5pt; font-weight: 800;">₹${totals.totalDispatchedValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>`;
+
+  const totalsCardValueHtml = totals.hasMissingPrices
+    ? totals.pricedLinesCount > 0
+      ? `₹${totals.totalDispatchedValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}* <span class="totals-partial-tag">Partial</span>`
+      : '<span class="price-unavailable" style="font-size: 9pt;">Unavailable</span>'
+    : `₹${totals.totalDispatchedValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const pricingNoticeSection = totals.hasMissingPrices
+    ? `
+      <div class="note-card pricing-notice-card">
+        <span class="note-label text-amber">PRICING NOTICE:</span>
+        <span class="note-content">${
+          totals.pricedLinesCount === 0
+            ? 'Pricing rules are not configured for the dispatched items. Total stock valuation cannot be determined.'
+            : `Unit price is unavailable for ${totals.missingPricesCount} item(s). The grand total reflects only items with configured pricing.`
+        }</span>
+      </div>
+    `
     : '';
 
   const notesSection = transfer.notes
@@ -375,6 +430,12 @@ export function generateDispatchHtml(transfer: StockTransferDetailed): string {
       border: 1px solid #fde68a;
     }
 
+    .status-backdated {
+      background: #fef3c7;
+      color: #92400e;
+      border: 1px solid #fcd34d;
+    }
+
     /* ══════════════════════════════════════════════════════
        PRODUCT LINE ITEMS TABLE
        ══════════════════════════════════════════════════════ */
@@ -402,7 +463,7 @@ export function generateDispatchHtml(transfer: StockTransferDetailed): string {
     table.items-table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 9.5pt;
+      font-size: 9pt;
       margin-bottom: 10px;
     }
 
@@ -414,16 +475,16 @@ export function generateDispatchHtml(transfer: StockTransferDetailed): string {
       background: #5b1f2d;
       color: #ffffff;
       font-weight: 700;
-      font-size: 8.5pt;
+      font-size: 8pt;
       text-transform: uppercase;
       letter-spacing: 0.5px;
-      padding: 7px 9px;
+      padding: 6.5px 7px;
       text-align: left;
       border: 1px solid #5b1f2d;
     }
 
     table.items-table td {
-      padding: 6.5px 9px;
+      padding: 6px 7px;
       border: 1px solid #e2e8f0;
       vertical-align: middle;
       color: #1e293b;
@@ -438,8 +499,8 @@ export function generateDispatchHtml(transfer: StockTransferDetailed): string {
       background: #f1f5f9;
       font-weight: 800;
       border-top: 2.5px solid #5b1f2d;
-      padding: 7.5px 9px;
-      font-size: 9.5pt;
+      padding: 7px 7px;
+      font-size: 9pt;
     }
 
     .text-center { text-align: center; }
@@ -450,12 +511,52 @@ export function generateDispatchHtml(transfer: StockTransferDetailed): string {
     .text-dark { color: #0f172a; }
     .text-emerald { color: #047857; }
     .text-danger { color: #991b1b; }
+    .text-amber { color: #92400e; }
     .text-batch {
       white-space: nowrap;
-      font-size: 9pt;
+      font-size: 8.5pt;
       font-family: "Courier New", Courier, monospace;
       font-weight: 600;
-      letter-spacing: 0.3px;
+      letter-spacing: 0.2px;
+    }
+
+    .price-unavailable {
+      color: #94a3b8;
+      font-style: italic;
+      font-size: 7.5pt;
+      white-space: nowrap;
+    }
+
+    .price-warning {
+      color: #b45309;
+      font-weight: 700;
+    }
+
+    .pricing-notice-card {
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      margin-top: -2px;
+    }
+
+    .pricing-notice-card .note-label {
+      color: #b45309;
+    }
+
+    .pricing-notice-card .note-content {
+      color: #92400e;
+    }
+
+    .totals-partial-tag {
+      font-size: 6pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      background: #fef3c7;
+      color: #b45309;
+      border: 1px solid #fde68a;
+      padding: 1px 4px;
+      border-radius: 3px;
+      vertical-align: middle;
+      margin-left: 2px;
     }
 
     /* ══════════════════════════════════════════════════════
@@ -465,13 +566,14 @@ export function generateDispatchHtml(transfer: StockTransferDetailed): string {
       background: #f8fafc;
       border: 1.5px solid #cbd5e1;
       border-radius: 6px;
-      padding: 10px 16px;
+      padding: 9px 14px;
       margin: 10px 0 12px 0;
       display: flex;
       justify-content: space-between;
       align-items: center;
       page-break-inside: avoid;
-      gap: 14px;
+      gap: 12px;
+      flex-wrap: wrap;
     }
 
     .totals-metric {
@@ -691,7 +793,10 @@ export function generateDispatchHtml(transfer: StockTransferDetailed): string {
         <div class="routing-branch-name">${escapeHtml(transfer.source_branch_name || 'Main Branch')}</div>
         <div class="routing-meta-row">
           <span>Dispatched: <strong>${escapeHtml(formattedDateTime)}</strong></span>
-          <span class="status-badge ${statusClass}">${escapeHtml(statusLabel)}</span>
+          <div style="display: flex; gap: 4px; align-items: center;">
+            ${transfer.is_backdated ? '<span class="status-badge status-backdated">BACKDATED</span>' : ''}
+            <span class="status-badge ${statusClass}">${escapeHtml(statusLabel)}</span>
+          </div>
         </div>
       </div>
 
@@ -714,12 +819,14 @@ export function generateDispatchHtml(transfer: StockTransferDetailed): string {
     <table class="items-table">
       <thead>
         <tr>
-          <th class="text-center" style="width: 38px;">Sl.</th>
+          <th class="text-center" style="width: 32px;">Sl.</th>
           <th>Product Name</th>
-          <th style="width: 140px;">Flavour / Variant</th>
-          <th class="text-center" style="width: 115px; white-space: nowrap;">Batch Number</th>
-          <th class="text-right" style="width: 90px;">Dispatched Qty</th>
+          <th style="width: 105px;">Flavour / Variant</th>
+          <th class="text-center" style="width: 95px; white-space: nowrap;">Batch Number</th>
+          <th class="text-right" style="width: 65px;">Dispatched Qty</th>
           ${receivedHeader}
+          <th class="text-right" style="width: 80px;">Unit Price (₹)</th>
+          <th class="text-right" style="width: 85px;">Total (₹)</th>
         </tr>
       </thead>
       <tbody>
@@ -727,9 +834,11 @@ export function generateDispatchHtml(transfer: StockTransferDetailed): string {
       </tbody>
       <tfoot>
         <tr>
-          <td colspan="4" class="text-right font-bold">TOTAL DISPATCHED QUANTITY:</td>
-          <td class="text-right font-bold font-mono" style="font-size: 10pt;">${totals.totalDispatchedQty}</td>
+          <td colspan="4" class="text-right font-bold">TOTAL DISPATCHED:</td>
+          <td class="text-right font-bold font-mono" style="font-size: 9.5pt;">${totals.totalDispatchedQty}</td>
           ${receivedFooter}
+          <td class="text-right font-bold text-muted" style="font-size: 7.5pt; text-transform: uppercase;">GRAND TOTAL:</td>
+          <td class="text-right font-bold font-mono" style="font-size: 9.5pt;">${grandTotalFooterHtml}</td>
         </tr>
       </tfoot>
     </table>
@@ -745,7 +854,11 @@ export function generateDispatchHtml(transfer: StockTransferDetailed): string {
         <span class="totals-metric-value highlight font-mono">${totals.totalDispatchedQty} Units</span>
       </div>
       <div class="totals-metric">
-        <span class="totals-metric-label">Quantity &amp; Unit Breakdown</span>
+        <span class="totals-metric-label">Grand Total Value</span>
+        <span class="totals-metric-value highlight font-mono">${totalsCardValueHtml}</span>
+      </div>
+      <div class="totals-metric">
+        <span class="totals-metric-label">Quantity Breakdown</span>
         <span class="totals-unit-pill">${escapeHtml(totals.unitSummaryText)}</span>
       </div>
       ${isReceived && totals.totalReceivedQty !== null ? `
@@ -756,6 +869,7 @@ export function generateDispatchHtml(transfer: StockTransferDetailed): string {
       ` : ''}
     </div>
 
+    ${pricingNoticeSection}
     ${notesSection}
     ${discrepancySection}
 
@@ -826,8 +940,9 @@ export function generateDispatchHtml(transfer: StockTransferDetailed): string {
 </html>`;
 }
 
-function escapeHtml(str: string): string {
-  return str
+function escapeHtml(str?: string | null): string {
+  if (!str) return '';
+  return String(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

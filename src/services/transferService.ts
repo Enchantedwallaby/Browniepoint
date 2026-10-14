@@ -15,6 +15,8 @@ export interface CreateTransferParams {
   source_is_main?: boolean;
   notes?: string;
   dispatched_by?: string;
+  dispatched_at?: string;
+  is_backdated?: boolean;
   items: CreateTransferItemParam[];
 }
 
@@ -43,6 +45,7 @@ export interface StockTransferItemDetailed {
   variant_name?: string;
   batch_number?: string;
   expiry_date?: string;
+  unit_price?: number | null;
 }
 
 export interface StockTransferDetailed {
@@ -63,6 +66,7 @@ export interface StockTransferDetailed {
   destination_branch_name?: string;
   dispatched_by_name?: string;
   received_by_name?: string;
+  is_backdated?: boolean;
   items: StockTransferItemDetailed[];
 }
 
@@ -94,6 +98,7 @@ export const transferService = {
         quantity: i.quantity,
         notes: i.notes || null,
       })),
+      p_dispatched_at: params.dispatched_at || null,
     };
 
     const rpcName = params.source_is_main
@@ -159,8 +164,10 @@ export const transferService = {
         stock_transfer_items (
           *,
           variant:product_variants (
+            id,
             name,
-            product:products ( name )
+            product:products ( name ),
+            pricing_rules ( id, pricing_type, base_price, active, effective_from, effective_to )
           ),
           batch:product_batches ( batch_number, expiry_date )
         )
@@ -188,38 +195,84 @@ export const transferService = {
 
     if (!data) return [];
 
-    return data.map((row: any) => ({
-      id: row.id,
-      transfer_number: row.transfer_number,
-      source_branch_id: row.source_branch_id,
-      destination_branch_id: row.destination_branch_id,
-      status: row.status,
-      dispatched_by: row.dispatched_by,
-      dispatched_at: row.dispatched_at,
-      received_by: row.received_by,
-      received_at: row.received_at,
-      notes: row.notes,
-      discrepancy_notes: row.discrepancy_notes,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-      source_branch_name: row.source_branch?.name,
-      destination_branch_name: row.destination_branch?.name,
-      dispatched_by_name: row.dispatcher?.full_name,
-      received_by_name: row.receiver?.full_name,
-      items: (row.stock_transfer_items || []).map((sti: any) => ({
-        id: sti.id,
-        transfer_id: sti.transfer_id,
-        product_variant_id: sti.product_variant_id,
-        batch_id: sti.batch_id,
-        quantity_dispatched: Number(sti.quantity_dispatched),
-        quantity_received: sti.quantity_received !== null ? Number(sti.quantity_received) : null,
-        notes: sti.notes,
-        created_at: sti.created_at,
-        product_name: sti.variant?.product?.name || 'Unknown Product',
-        variant_name: sti.variant?.name || 'Standard',
-        batch_number: sti.batch?.batch_number,
-        expiry_date: sti.batch?.expiry_date,
-      })),
-    }));
+    return data.map((row: any) => {
+      const refTime = row.dispatched_at && !isNaN(new Date(row.dispatched_at).getTime())
+        ? new Date(row.dispatched_at).getTime()
+        : (row.created_at && !isNaN(new Date(row.created_at).getTime())
+          ? new Date(row.created_at).getTime()
+          : Date.now());
+
+      const isBackdated = (row.dispatched_at && row.created_at
+        ? new Date(row.dispatched_at).toISOString().split('T')[0] <
+          new Date(row.created_at).toISOString().split('T')[0]
+        : false) || (typeof row.notes === 'string' && row.notes.includes('[BACKDATED'));
+
+      return {
+        id: row.id,
+        transfer_number: row.transfer_number,
+        source_branch_id: row.source_branch_id,
+        destination_branch_id: row.destination_branch_id,
+        status: row.status,
+        dispatched_by: row.dispatched_by,
+        dispatched_at: row.dispatched_at,
+        received_by: row.received_by,
+        received_at: row.received_at,
+        notes: row.notes,
+        discrepancy_notes: row.discrepancy_notes,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        source_branch_name: row.source_branch?.name,
+        destination_branch_name: row.destination_branch?.name,
+        dispatched_by_name: row.dispatcher?.full_name,
+        received_by_name: row.receiver?.full_name,
+        is_backdated: isBackdated,
+        items: (row.stock_transfer_items || []).map((sti: any) => {
+          const activeRules = (sti.variant?.pricing_rules || [])
+            .filter((r: any) => {
+              if (!r.active || r.base_price === null || r.base_price === undefined) {
+                return false;
+              }
+              if (r.effective_from) {
+                const fromTime = new Date(r.effective_from).getTime();
+                if (!isNaN(fromTime) && fromTime > refTime) {
+                  return false;
+                }
+              }
+              if (r.effective_to) {
+                const toTime = new Date(r.effective_to).getTime();
+                if (!isNaN(toTime) && toTime < refTime) {
+                  return false;
+                }
+              }
+              return true;
+            })
+            .sort(
+              (a: any, b: any) =>
+                new Date(b.effective_from || 0).getTime() - new Date(a.effective_from || 0).getTime()
+            );
+
+          const unitPrice =
+            activeRules.length > 0 && !isNaN(Number(activeRules[0].base_price))
+              ? Number(activeRules[0].base_price)
+              : null;
+
+          return {
+            id: sti.id,
+            transfer_id: sti.transfer_id,
+            product_variant_id: sti.product_variant_id,
+            batch_id: sti.batch_id,
+            quantity_dispatched: Number(sti.quantity_dispatched),
+            quantity_received: sti.quantity_received !== null ? Number(sti.quantity_received) : null,
+            notes: sti.notes,
+            created_at: sti.created_at,
+            product_name: sti.variant?.product?.name || 'Unknown Product',
+            variant_name: sti.variant?.name || 'Standard',
+            batch_number: sti.batch?.batch_number,
+            expiry_date: sti.batch?.expiry_date,
+            unit_price: unitPrice,
+          };
+        }),
+      };
+    });
   },
 };

@@ -27,6 +27,7 @@ import {
   Building2,
   Inbox,
   AlertTriangle,
+  Calendar,
 } from 'lucide-react';
 
 interface TransfersPageProps {
@@ -63,6 +64,8 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
   const isMainSource = branches.find((branch) => branch.id === sourceBranchId)?.branch_type === 'MAIN';
   const [destinationBranchId, setDestinationBranchId] = useState<string>('');
   const [dispatchNotes, setDispatchNotes] = useState<string>('');
+  const [isBackdatedMode, setIsBackdatedMode] = useState<boolean>(false);
+  const [backdatedDate, setBackdatedDate] = useState<string>('');
   const [dispatchCart, setDispatchCart] = useState<DispatchCartItem[]>([]);
   const [dispatching, setDispatching] = useState(false);
   const [dispatchError, setDispatchError] = useState<string | null>(null);
@@ -247,15 +250,41 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
       return;
     }
 
+    if (isBackdatedMode) {
+      if (!backdatedDate) {
+        setDispatchError('Please select a valid historical dispatch date.');
+        return;
+      }
+      const selected = new Date(backdatedDate + 'T00:00:00');
+      const today = new Date();
+      today.setHours(23, 59, 59, 999);
+      if (isNaN(selected.getTime()) || selected > today) {
+        setDispatchError('The historical dispatch date cannot be in the future.');
+        return;
+      }
+    }
+
     setDispatching(true);
 
     try {
+      const dispatchedAt = isBackdatedMode
+        ? new Date(backdatedDate + 'T12:00:00').toISOString()
+        : undefined;
+
+      const finalNotes = isBackdatedMode
+        ? (dispatchNotes.trim()
+            ? `${dispatchNotes.trim()} [BACKDATED: ${backdatedDate}]`
+            : `[BACKDATED DISPATCH: ${backdatedDate}]`)
+        : dispatchNotes;
+
       const transferId = await transferService.createTransfer({
         source_branch_id: sourceBranchId,
         destination_branch_id: destinationBranchId,
         source_is_main: isMainSource,
-        notes: dispatchNotes,
+        notes: finalNotes,
         dispatched_by: profile.id,
+        dispatched_at: dispatchedAt,
+        is_backdated: isBackdatedMode,
         items: dispatchCart.map((i) => ({
           product_variant_id: i.product_variant_id,
           quantity: i.quantity,
@@ -266,6 +295,8 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
 
       setDispatchCart([]);
       setDispatchNotes('');
+      setIsBackdatedMode(false);
+      setBackdatedDate('');
 
       // Reload transfers list and open document modal
       await loadTransfersList();
@@ -399,15 +430,34 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
             </div>
           )}
 
-          {/* Quick New Dispatch button */}
+          {/* Quick Dispatch buttons */}
           {isMainEmployee && activeTab !== 'dispatch' && (
-            <button
-              onClick={() => setActiveTab('dispatch')}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-brand-700 hover:bg-brand-800 text-white text-sm font-semibold rounded-lg shadow-sm transition-colors"
-            >
-              <Send className="w-4 h-4" />
-              Dispatch New Transfer
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setIsBackdatedMode(false);
+                  setBackdatedDate('');
+                  setActiveTab('dispatch');
+                }}
+                className="inline-flex items-center gap-2 px-3.5 py-2 bg-brand-700 hover:bg-brand-800 text-white text-xs md:text-sm font-semibold rounded-lg shadow-sm transition-colors"
+              >
+                <Send className="w-4 h-4" />
+                Dispatch New Transfer
+              </button>
+
+              <button
+                onClick={() => {
+                  setIsBackdatedMode(true);
+                  setBackdatedDate('');
+                  setActiveTab('dispatch');
+                }}
+                className="inline-flex items-center gap-2 px-3.5 py-2 bg-amber-700 hover:bg-amber-800 text-white text-xs md:text-sm font-semibold rounded-lg shadow-sm transition-colors"
+                title="Create a backdated transfer with historical dispatch date"
+              >
+                <Calendar className="w-4 h-4" />
+                Create Backdated Transfer
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -546,15 +596,30 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
                   <tbody className="divide-y divide-slate-100">
                     {filteredTransfers.map((trf) => (
                       <tr key={trf.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="py-3 px-4 font-mono font-bold text-brand-900">
-                          {trf.transfer_number}
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-mono font-bold text-brand-900">{trf.transfer_number}</span>
+                            {trf.is_backdated && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                                Backdated
+                              </span>
+                            )}
+                          </div>
                         </td>
 
                         <td className="py-3 px-4 text-slate-600">
-                          {new Date(trf.dispatched_at).toLocaleString('en-IN', {
-                            dateStyle: 'medium',
-                            timeStyle: 'short',
-                          })}
+                          <p className="font-medium text-slate-800">
+                            {new Date(trf.dispatched_at).toLocaleDateString('en-IN', {
+                              day: '2-digit',
+                              month: 'short',
+                              year: 'numeric',
+                            })}
+                          </p>
+                          <p className="text-[10px] text-slate-400">
+                            {trf.is_backdated
+                              ? `Entered: ${new Date(trf.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}`
+                              : new Date(trf.dispatched_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                          </p>
                         </td>
 
                         <td className="py-3 px-4 font-semibold text-slate-800">
@@ -741,6 +806,74 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
               </div>
             )}
 
+            {/* Dispatch Mode Selector: Standard vs Backdated */}
+            <div className="bg-slate-100 p-1 rounded-xl flex items-center gap-1 text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsBackdatedMode(false);
+                  setBackdatedDate('');
+                  setDispatchError(null);
+                }}
+                className={`flex-1 py-1.5 px-3 font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                  !isBackdatedMode
+                    ? 'bg-white text-brand-900 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Send className="w-3.5 h-3.5" />
+                Normal (Today)
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsBackdatedMode(true);
+                  setDispatchError(null);
+                }}
+                className={`flex-1 py-1.5 px-3 font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                  isBackdatedMode
+                    ? 'bg-amber-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                Backdated Transfer
+              </button>
+            </div>
+
+            {isBackdatedMode && (
+              <div className="bg-amber-50 border border-amber-300 p-3 rounded-xl space-y-2 text-xs">
+                <div className="flex items-center gap-1.5 text-amber-900 font-bold">
+                  <Calendar className="w-4 h-4 text-amber-700 shrink-0" />
+                  <span>Backdated Dispatch Settings</span>
+                </div>
+                <p className="text-[11px] text-amber-800 leading-tight">
+                  Historical dispatch date determines pricing rules and challan timestamps.
+                </p>
+                <div>
+                  <label className="block text-[11px] font-bold text-amber-950 mb-1">
+                    Historical Dispatch Date <span className="text-rose-600">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={backdatedDate}
+                    max={new Date().toISOString().split('T')[0]}
+                    onChange={(e) => {
+                      setBackdatedDate(e.target.value);
+                      setDispatchError(null);
+                    }}
+                    className="w-full px-3 py-1.5 border border-amber-300 rounded-lg text-xs font-bold text-amber-950 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                  {!backdatedDate && (
+                    <p className="text-[10px] text-amber-700 italic mt-1">
+                      Please select previous dispatch date (not defaulted to today).
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Destination Branch Selection */}
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -848,17 +981,21 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
                 <button
                   onClick={handleDispatchSubmit}
                   disabled={dispatching || dispatchCart.length === 0}
-                  className="w-full py-3 px-4 bg-brand-700 hover:bg-brand-800 text-white font-bold text-sm rounded-xl transition-colors shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
+                  className={`w-full py-3 px-4 text-white font-bold text-sm rounded-xl transition-colors shadow-md disabled:opacity-50 flex items-center justify-center gap-2 ${
+                    isBackdatedMode
+                      ? 'bg-amber-700 hover:bg-amber-800'
+                      : 'bg-brand-700 hover:bg-brand-800'
+                  }`}
                 >
                   {dispatching ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
-                      Dispatching Transfer...
+                      {isBackdatedMode ? 'Recording Backdated Transfer...' : 'Dispatching Transfer...'}
                     </>
                   ) : (
                     <>
-                      <Send className="w-4 h-4" />
-                      Dispatch Transfer ({dispatchCart.length} items)
+                      {isBackdatedMode ? <Calendar className="w-4 h-4" /> : <Send className="w-4 h-4" />}
+                      {isBackdatedMode ? 'Confirm Backdated Dispatch' : 'Dispatch Transfer'} ({dispatchCart.length} items)
                     </>
                   )}
                 </button>
@@ -1077,6 +1214,32 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
                 </div>
               </div>
 
+              {selectedTransferDoc.is_backdated && (
+                <div className="bg-amber-50 border border-amber-200 p-2.5 rounded-lg flex items-center justify-between text-xs text-amber-900">
+                  <span className="font-bold flex items-center gap-1.5">
+                    <Calendar className="w-4 h-4 text-amber-600 shrink-0" />
+                    Backdated Stock Transfer
+                  </span>
+                  <span className="text-[11px] text-amber-800">
+                    Historical Dispatch Date:{' '}
+                    <strong>
+                      {new Date(selectedTransferDoc.dispatched_at).toLocaleDateString('en-IN', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                      })}
+                    </strong>{' '}
+                    (Recorded on{' '}
+                    {new Date(selectedTransferDoc.created_at).toLocaleDateString('en-IN', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric',
+                    })}
+                    )
+                  </span>
+                </div>
+              )}
+
               {/* Dispatched Line Items Table */}
               <div className="space-y-2">
                 <h5 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
@@ -1094,46 +1257,110 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
                         {selectedTransferDoc.status === 'RECEIVED' && (
                           <th className="p-2.5 text-right">Received Qty</th>
                         )}
+                        <th className="p-2.5 text-right">Unit Price (₹)</th>
+                        <th className="p-2.5 text-right">Total (₹)</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {selectedTransferDoc.items.map((item) => (
-                        <tr key={item.id}>
-                          <td className="p-2.5 font-bold text-slate-900">
-                            {item.product_name}
-                          </td>
-                          <td className="p-2.5 text-slate-600">{item.variant_name}</td>
-                          <td className="p-2.5 font-mono text-slate-700">
-                            {item.batch_number || 'N/A'}
-                          </td>
-                          <td className="p-2.5 text-right font-black text-slate-900">
-                            {item.quantity_dispatched}
-                          </td>
-                          {selectedTransferDoc.status === 'RECEIVED' && (
-                            <td className="p-2.5 text-right font-black text-emerald-700">
-                              {item.quantity_received ?? item.quantity_dispatched}
+                      {selectedTransferDoc.items.map((item) => {
+                        const hasPrice = typeof item.unit_price === 'number' && !isNaN(item.unit_price) && item.unit_price >= 0;
+                        const lineTotal = hasPrice ? item.quantity_dispatched * item.unit_price! : null;
+                        return (
+                          <tr key={item.id}>
+                            <td className="p-2.5 font-bold text-slate-900">
+                              {item.product_name}
                             </td>
-                          )}
-                        </tr>
-                      ))}
+                            <td className="p-2.5 text-slate-600">{item.variant_name}</td>
+                            <td className="p-2.5 font-mono text-slate-700">
+                              {item.batch_number || 'N/A'}
+                            </td>
+                            <td className="p-2.5 text-right font-black text-slate-900">
+                              {item.quantity_dispatched}
+                            </td>
+                            {selectedTransferDoc.status === 'RECEIVED' && (
+                              <td className="p-2.5 text-right font-black text-emerald-700">
+                                {item.quantity_received ?? item.quantity_dispatched}
+                              </td>
+                            )}
+                            <td className="p-2.5 text-right font-mono text-slate-700">
+                              {hasPrice ? (
+                                `₹${item.unit_price!.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                              ) : (
+                                <span className="text-amber-600 text-[11px] italic">Unavailable</span>
+                              )}
+                            </td>
+                            <td className="p-2.5 text-right font-mono font-bold text-slate-900">
+                              {lineTotal !== null ? (
+                                `₹${lineTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                              ) : (
+                                <span className="text-slate-400">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                     <tfoot className="bg-slate-50 border-t-2 border-slate-200 font-bold text-slate-800">
-                      <tr>
-                        <td colSpan={3} className="p-2.5 text-right uppercase text-[11px] text-slate-500">
-                          Total Quantity:
-                        </td>
-                        <td className="p-2.5 text-right font-black text-slate-900">
-                          {selectedTransferDoc.items.reduce((s, i) => s + (Number(i.quantity_dispatched) || 0), 0)}
-                        </td>
-                        {selectedTransferDoc.status === 'RECEIVED' && (
-                          <td className="p-2.5 text-right font-black text-emerald-700">
-                            {selectedTransferDoc.items.reduce((s, i) => s + (Number(i.quantity_received ?? i.quantity_dispatched) || 0), 0)}
-                          </td>
-                        )}
-                      </tr>
+                      {(() => {
+                        let totalDispatchedVal = 0;
+                        let missingPricesCount = 0;
+                        for (const it of selectedTransferDoc.items) {
+                          if (typeof it.unit_price === 'number' && !isNaN(it.unit_price) && it.unit_price >= 0) {
+                            totalDispatchedVal += it.quantity_dispatched * it.unit_price;
+                          } else {
+                            missingPricesCount++;
+                          }
+                        }
+                        return (
+                          <tr>
+                            <td colSpan={3} className="p-2.5 text-right uppercase text-[11px] text-slate-500">
+                              Total:
+                            </td>
+                            <td className="p-2.5 text-right font-black text-slate-900">
+                              {selectedTransferDoc.items.reduce((s, i) => s + (Number(i.quantity_dispatched) || 0), 0)}
+                            </td>
+                            {selectedTransferDoc.status === 'RECEIVED' && (
+                              <td className="p-2.5 text-right font-black text-emerald-700">
+                                {selectedTransferDoc.items.reduce((s, i) => s + (Number(i.quantity_received ?? i.quantity_dispatched) || 0), 0)}
+                              </td>
+                            )}
+                            <td className="p-2.5 text-right uppercase text-[11px] text-slate-500">
+                              Grand Total:
+                            </td>
+                            <td className="p-2.5 text-right font-black text-brand-900 font-mono">
+                              {missingPricesCount === 0 ? (
+                                `₹${totalDispatchedVal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                              ) : missingPricesCount === selectedTransferDoc.items.length ? (
+                                <span className="text-amber-800 italic font-normal text-[11px]">Unavailable</span>
+                              ) : (
+                                <span title={`${missingPricesCount} item(s) missing pricing`} className="text-amber-800">
+                                  ₹{totalDispatchedVal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}*
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })()}
                     </tfoot>
                   </table>
                 </div>
+
+                {(() => {
+                  const missingCount = selectedTransferDoc.items.filter(
+                    (i) => typeof i.unit_price !== 'number' || isNaN(i.unit_price) || i.unit_price < 0
+                  ).length;
+                  if (missingCount === 0) return null;
+                  return (
+                    <div className="text-xs bg-amber-50 p-2 rounded-lg border border-amber-200 text-amber-800 flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <span>
+                        {missingCount === selectedTransferDoc.items.length
+                          ? 'Pricing rules are not configured for these items. Total valuation is unavailable.'
+                          : `Pricing is unconfigured for ${missingCount} item(s). Grand total reflects only priced items.`}
+                      </span>
+                    </div>
+                  );
+                })()}
               </div>
 
               {selectedTransferDoc.notes && (
