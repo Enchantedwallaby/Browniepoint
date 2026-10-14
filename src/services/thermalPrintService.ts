@@ -472,11 +472,21 @@ class ThermalPrintService {
         item.quantity *
           item.unit_price_snapshot;
 
+      const itemName =
+        item.custom_item_name ||
+        item.product_name ||
+        'Item';
+
+      const variantLabel =
+        item.weight_kg
+          ? `${item.weight_kg} kg`
+          : item.variant_name;
+
       out += this.formatLineItem(
-        item.product_name || 'Item',
+        itemName,
         item.quantity,
         lineTotal,
-        item.variant_name
+        variantLabel
       );
     });
 

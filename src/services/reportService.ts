@@ -1,12 +1,14 @@
 import { supabase } from '@/lib/supabase';
 import type { InventoryMovementType, PaymentMethod, ReturnReason, ReturnStatus, TransferStatus } from '@/types/database';
 
-export type BusinessReportType = 'sales' | 'returns' | 'transfers' | 'movements';
+export type BusinessReportType = 'sales' | 'returns' | 'transfers' | 'movements' | 'expenses';
 
 export interface ReportFilters {
   fromInclusive: string;
   toExclusive: string;
   branchId: string | null;
+  fromDate?: string;
+  toDate?: string;
 }
 
 export interface SalesReportData {
@@ -94,7 +96,35 @@ export interface MovementsReportData {
   }[];
 }
 
-export type BusinessReportData = SalesReportData | ReturnsReportData | TransfersReportData | MovementsReportData;
+export interface ExpensesReportData {
+  summary: {
+    totalExpenses: number;
+    count: number;
+    cashExpenses: number;
+    onlineExpenses: number;
+  };
+  rows: {
+    id: string;
+    date: string;
+    branch: string;
+    reason: string;
+    category: string;
+    paymentMethod: string;
+    amount: number;
+    employee: string;
+    notes: string;
+  }[];
+  categories: { category: string; count: number; total: number }[];
+  payments: { paymentMethod: string; count: number; total: number }[];
+  daily: { date: string; count: number; cash: number; online: number; totalExpenses: number }[];
+}
+
+export type BusinessReportData =
+  | SalesReportData
+  | ReturnsReportData
+  | TransfersReportData
+  | MovementsReportData
+  | ExpensesReportData;
 
 const PAGE_SIZE = 1000;
 
@@ -145,7 +175,7 @@ export const reportService = {
           branch:branches!sales_branch_id_fkey(name),
           performer:profiles!sales_performed_by_fkey(full_name),
           sale_items(
-            id, quantity, unit_price_snapshot, line_total,
+            id, quantity, unit_price_snapshot, line_total, weight_kg, custom_item_name,
             variant:product_variants!sale_items_product_variant_id_fkey(
               name,
               product:products!product_variants_product_id_fkey(name, show_weight_size)
@@ -220,9 +250,9 @@ export const reportService = {
       employeeMap.set(employeeKey, employee);
 
       for (const item of saleItems) {
-        const productName = item.variant?.product?.name || 'Unknown Product';
-        const variantName = item.variant?.name || 'Standard';
-        const showWeight = item.variant?.product?.show_weight_size ?? true;
+        const productName = item.custom_item_name || item.variant?.product?.name || 'Unknown Product';
+        const variantName = item.weight_kg ? `${item.weight_kg} kg` : (item.variant?.name || 'Standard');
+        const showWeight = item.weight_kg ? true : (item.variant?.product?.show_weight_size ?? true);
         const displayName = formatProductDisplayName(productName, variantName, showWeight);
         const productKey = `${productName}\u0000${variantName}`;
         const product = productMap.get(productKey) || { product: displayName, quantity: 0, totalSales: 0 };
@@ -427,6 +457,125 @@ export const reportService = {
           performedBy: movement.performer?.full_name || movement.performed_by || 'Not recorded',
         };
       }),
+    };
+  },
+
+  async getExpensesReport(filters: ReportFilters): Promise<ExpensesReportData> {
+    const expenses = await fetchAllPages<any>(() => {
+      // Use calendar dates fromDate and toDate directly (e.g. "2026-10-14")
+      const start = filters.fromDate || filters.fromInclusive.split('T')[0];
+      const end = filters.toDate || filters.toExclusive.split('T')[0];
+
+      let query = supabase
+        .from('expenses')
+        .select(`
+          id, expense_date, branch_id, amount, reason, category, payment_method, notes, recorded_by, created_at,
+          branch:branches(name),
+          recorder:profiles!expenses_recorded_by_fkey(full_name)
+        `)
+        .gte('expense_date', start)
+        .lte('expense_date', end)
+        .order('expense_date', { ascending: true })
+        .order('created_at', { ascending: true });
+
+      query = applyBranchFilter(query, filters.branchId);
+      return query;
+    });
+
+    const dailyMap = new Map<string, ExpensesReportData['daily'][number]>();
+    const categoryMap = new Map<string, ExpensesReportData['categories'][number]>();
+    const paymentMap = new Map<string, ExpensesReportData['payments'][number]>();
+
+    // Pre-seed both supported payment methods so both always show up clearly
+    paymentMap.set('CASH', { paymentMethod: 'Cash', count: 0, total: 0 });
+    paymentMap.set('ONLINE', { paymentMethod: 'UPI / Online', count: 0, total: 0 });
+
+    let totalExpenses = 0;
+    let cashExpenses = 0;
+    let onlineExpenses = 0;
+
+    const rows = expenses.map((exp) => {
+      const amount = numberValue(exp.amount);
+      const isOnline = exp.payment_method === 'ONLINE';
+      const methodLabel = isOnline ? 'UPI / Online' : 'Cash';
+      const methodKey = isOnline ? 'ONLINE' : 'CASH';
+      const cat = exp.category?.trim() || 'Other / Miscellaneous';
+      const date = exp.expense_date;
+      const employeeName = exp.recorder?.full_name || 'Staff';
+
+      totalExpenses += amount;
+      if (isOnline) {
+        onlineExpenses += amount;
+      } else {
+        cashExpenses += amount;
+      }
+
+      // Daily aggregation
+      const daily = dailyMap.get(date) || {
+        date,
+        count: 0,
+        cash: 0,
+        online: 0,
+        totalExpenses: 0,
+      };
+      daily.count += 1;
+      daily.totalExpenses += amount;
+      if (isOnline) daily.online += amount;
+      else daily.cash += amount;
+      dailyMap.set(date, daily);
+
+      // Category aggregation
+      const categoryEntry = categoryMap.get(cat) || { category: cat, count: 0, total: 0 };
+      categoryEntry.count += 1;
+      categoryEntry.total += amount;
+      categoryMap.set(cat, categoryEntry);
+
+      // Payment method aggregation
+      const paymentEntry = paymentMap.get(methodKey) || { paymentMethod: methodLabel, count: 0, total: 0 };
+      paymentEntry.count += 1;
+      paymentEntry.total += amount;
+      paymentMap.set(methodKey, paymentEntry);
+
+      return {
+        id: exp.id,
+        date: exp.expense_date,
+        branch: exp.branch?.name || exp.branch_id,
+        reason: exp.reason,
+        category: cat,
+        paymentMethod: methodLabel,
+        amount,
+        employee: employeeName,
+        notes: exp.notes || '',
+      };
+    });
+
+    totalExpenses = Math.round(totalExpenses * 100) / 100;
+    cashExpenses = Math.round(cashExpenses * 100) / 100;
+    onlineExpenses = Math.round(onlineExpenses * 100) / 100;
+
+    for (const p of paymentMap.values()) {
+      p.total = Math.round(p.total * 100) / 100;
+    }
+    for (const c of categoryMap.values()) {
+      c.total = Math.round(c.total * 100) / 100;
+    }
+    for (const d of dailyMap.values()) {
+      d.totalExpenses = Math.round(d.totalExpenses * 100) / 100;
+      d.cash = Math.round(d.cash * 100) / 100;
+      d.online = Math.round(d.online * 100) / 100;
+    }
+
+    return {
+      summary: {
+        totalExpenses,
+        count: expenses.length,
+        cashExpenses,
+        onlineExpenses,
+      },
+      rows,
+      categories: [...categoryMap.values()].sort((a, b) => b.total - a.total),
+      payments: [paymentMap.get('CASH')!, paymentMap.get('ONLINE')!],
+      daily: [...dailyMap.values()].sort((a, b) => a.date.localeCompare(b.date)),
     };
   },
 };

@@ -13,28 +13,25 @@
 /* ---- Print Media ---- */
 @media print {
   /* Page setup for 72mm thermal roll with dynamic height */
-  @page {
+  @page thermal_receipt {
     size: 72mm auto;
     margin: 0;
   }
 
-  /* Reset document and layout containers so min-h-screen/100vh never force 297mm height */
-  html,
-  body,
-  #root,
-  .min-h-screen,
-  div,
-  main,
-  section,
-  header,
-  footer {
+  /* Reset document and layout containers ONLY when a customer receipt is being printed */
+  body.printing-receipt,
+  body.printing-receipt #root,
+  body.printing-receipt .min-h-screen,
+  body:has(.receipt-print-wrapper):not(.printing-dispatch),
+  body:has(.receipt-print-wrapper):not(.printing-dispatch) #root,
+  body:has(.receipt-print-wrapper):not(.printing-dispatch) .min-h-screen {
     height: auto !important;
     min-height: 0 !important;
     max-height: none !important;
   }
 
-  html,
-  body {
+  body.printing-receipt,
+  body:has(.receipt-print-wrapper):not(.printing-dispatch) {
     width: 72mm !important;
     max-width: 72mm !important;
     margin: 0 !important;
@@ -43,8 +40,9 @@
     overflow: visible !important;
   }
 
-  /* Hide all normal application elements */
-  body * {
+  /* Hide application UI only when a customer receipt is being printed */
+  body.printing-receipt *,
+  body:has(.receipt-print-wrapper):not(.printing-dispatch) * {
     visibility: hidden !important;
   }
 
@@ -57,6 +55,7 @@
   }
 
   .receipt-print-wrapper {
+    page: thermal_receipt;
     display: block !important;
     position: absolute !important;
     top: 0 !important;

@@ -9,6 +9,8 @@ import {
   type StockTransferDetailed,
   type CreateTransferItemParam,
 } from '@/services/transferService';
+import { printDispatchDocument } from '@/services/dispatchPrintService';
+import '@/styles/dispatch-print.css';
 import type { Profile, Branch, FEFOInventoryRecord } from '@/types/database';
 import {
   ArrowLeftRight,
@@ -590,6 +592,15 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
                             Manifest
                           </button>
 
+                          <button
+                            onClick={() => printDispatchDocument(trf)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-brand-50 text-slate-700 hover:text-brand-900 rounded-lg font-semibold transition-colors"
+                            title="Print Dispatch Challan (A4)"
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                            Print
+                          </button>
+
                           {trf.status === 'IN_TRANSIT' &&
                             (isOwner ||
                               (assignedBranch && trf.destination_branch_id === assignedBranch.id)) && (
@@ -976,14 +987,14 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
       {/* MODAL 1: PRINTABLE TRANSFER MANIFEST DOCUMENT               */}
       {/* ════════════════════════════════════════════════════════════ */}
       {selectedTransferDoc && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden border border-slate-200">
+        <div className="dispatch-modal-backdrop fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="dispatch-modal-container bg-white rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden border border-slate-200">
             {/* Header */}
-            <div className="bg-brand-900 px-6 py-4 text-white flex items-center justify-between">
+            <div className="dispatch-modal-header bg-brand-900 px-6 py-4 text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <FileText className="w-5 h-5 text-brand-300" />
                 <div>
-                  <h3 className="font-bold text-base">Inter-Branch Transfer Manifest</h3>
+                  <h3 className="font-bold text-base">Stock Delivery Challan</h3>
                   <p className="text-xs text-brand-300 font-mono">
                     {selectedTransferDoc.transfer_number}
                   </p>
@@ -999,21 +1010,38 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
             </div>
 
             {/* Document Content */}
-            <div className="p-6 space-y-4 max-h-[550px] overflow-y-auto">
-              <div className="text-center pb-3 border-b border-dashed border-slate-200">
-                <h4 className="font-black text-slate-900 text-xl tracking-tight">
-                  BROWNIE POINT
-                </h4>
-                <p className="text-xs text-slate-600 font-bold uppercase tracking-wider mt-0.5">
-                  Stock Transfer Challan / Dispatch Note
-                </p>
-                <p className="text-xs text-slate-400 mt-1">
-                  Dispatch Date:{' '}
-                  {new Date(selectedTransferDoc.dispatched_at).toLocaleString('en-IN', {
-                    dateStyle: 'full',
-                    timeStyle: 'short',
-                  })}
-                </p>
+            <div className="dispatch-modal-body p-6 space-y-4 max-h-[550px] overflow-y-auto">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between pb-3 border-b border-dashed border-slate-200 gap-3">
+                <div className="flex items-center gap-3">
+                  <img
+                    src="/brownie-point-logo.png"
+                    alt="Brownie Point Logo"
+                    className="h-10 w-auto object-contain shrink-0"
+                  />
+                  <div>
+                    <h4 className="font-black text-brand-900 text-lg tracking-tight leading-tight">
+                      BROWNIE POINT
+                    </h4>
+                    <p className="text-xs text-slate-700 font-extrabold uppercase tracking-wider">
+                      Stock Delivery Challan
+                    </p>
+                    <p className="text-[10px] text-slate-500 italic">
+                      Cake &amp; Bakery Products
+                    </p>
+                  </div>
+                </div>
+                <div className="text-left sm:text-right">
+                  <span className="font-mono text-xs font-bold text-brand-950 bg-slate-100 px-2.5 py-1 rounded border border-slate-200 inline-block">
+                    {selectedTransferDoc.transfer_number}
+                  </span>
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Dispatch Date:{' '}
+                    {new Date(selectedTransferDoc.dispatched_at).toLocaleString('en-IN', {
+                      dateStyle: 'medium',
+                      timeStyle: 'short',
+                    })}
+                  </p>
+                </div>
               </div>
 
               {/* Header Info */}
@@ -1035,7 +1063,9 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
                 <div>
                   <span className="text-slate-500 font-medium">Dispatched By:</span>
                   <p className="font-semibold text-slate-800">
-                    {selectedTransferDoc.dispatched_by_name || 'Main Branch Employee'}
+                    {selectedTransferDoc.dispatched_by_name && !selectedTransferDoc.dispatched_by_name.includes('@')
+                      ? selectedTransferDoc.dispatched_by_name
+                      : (selectedTransferDoc.source_branch_name || 'Main Branch')}
                   </p>
                 </div>
 
@@ -1087,6 +1117,21 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
                         </tr>
                       ))}
                     </tbody>
+                    <tfoot className="bg-slate-50 border-t-2 border-slate-200 font-bold text-slate-800">
+                      <tr>
+                        <td colSpan={3} className="p-2.5 text-right uppercase text-[11px] text-slate-500">
+                          Total Quantity:
+                        </td>
+                        <td className="p-2.5 text-right font-black text-slate-900">
+                          {selectedTransferDoc.items.reduce((s, i) => s + (Number(i.quantity_dispatched) || 0), 0)}
+                        </td>
+                        {selectedTransferDoc.status === 'RECEIVED' && (
+                          <td className="p-2.5 text-right font-black text-emerald-700">
+                            {selectedTransferDoc.items.reduce((s, i) => s + (Number(i.quantity_received ?? i.quantity_dispatched) || 0), 0)}
+                          </td>
+                        )}
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               </div>
@@ -1104,13 +1149,35 @@ export const TransfersPage: React.FC<TransfersPageProps> = ({ profile, assignedB
                   <span className="text-rose-800">{selectedTransferDoc.discrepancy_notes}</span>
                 </div>
               )}
+
+              {/* Acknowledgement / Signatures */}
+              <div className="grid grid-cols-2 gap-3 pt-2 text-[11px]">
+                <div className="border border-dashed border-slate-300 rounded-lg p-2.5 bg-slate-50">
+                  <span className="font-bold text-slate-500 uppercase tracking-wider text-[9px] block mb-4">
+                    Dispatched By (Source Branch)
+                  </span>
+                  <div className="border-t border-slate-300 pt-1 flex justify-between text-slate-600 text-[10px]">
+                    <span>{selectedTransferDoc.dispatched_by_name || 'Staff'}</span>
+                    <span>Sign &amp; Date</span>
+                  </div>
+                </div>
+                <div className="border border-dashed border-slate-300 rounded-lg p-2.5 bg-slate-50">
+                  <span className="font-bold text-slate-500 uppercase tracking-wider text-[9px] block mb-4">
+                    Received By (Destination Branch)
+                  </span>
+                  <div className="border-t border-slate-300 pt-1 flex justify-between text-slate-600 text-[10px]">
+                    <span>{selectedTransferDoc.received_by_name || 'Store In-Charge'}</span>
+                    <span>Sign &amp; Date</span>
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Footer */}
-            <div className="bg-slate-50 px-6 py-4 border-t border-slate-200 flex justify-end gap-3">
+            <div className="dispatch-modal-footer bg-slate-50 px-6 py-4 border-t border-slate-200 flex justify-end gap-3">
               <button
-                onClick={() => window.print()}
-                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 font-semibold text-xs rounded-lg transition-colors flex items-center gap-1.5"
+                onClick={() => printDispatchDocument(selectedTransferDoc)}
+                className="px-4 py-2 bg-brand-800 hover:bg-brand-900 text-white font-semibold text-xs rounded-lg transition-colors flex items-center gap-1.5 shadow-sm"
               >
                 <Printer className="w-3.5 h-3.5" />
                 Print Manifest

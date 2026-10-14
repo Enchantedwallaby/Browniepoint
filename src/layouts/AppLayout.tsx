@@ -10,6 +10,7 @@ import {
   ShoppingBag,
   CreditCard,
   RotateCcw,
+  Wallet,
   BarChart3,
   MapPin,
   Menu,
@@ -67,6 +68,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
     { id: 'orders', label: 'Orders', icon: ShoppingBag },
     { id: 'sales', label: 'Sales', icon: CreditCard },
     { id: 'returns', label: 'Returns', icon: RotateCcw },
+    { id: 'expenses', label: 'Expenses', icon: Wallet },
     { id: 'reports', label: 'Reports', icon: BarChart3 },
     { id: 'status', label: 'System Status', icon: ShieldCheck },
   ];

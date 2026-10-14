@@ -86,20 +86,24 @@ export const CustomerReceipt: React.FC<CustomerReceiptProps> = ({
           <tbody>
             {sale.items.map((item, idx) => {
               const lineTotal = item.line_total || item.quantity * item.unit_price_snapshot;
+              const itemName = item.custom_item_name || item.product_name || 'Item';
+              const variantLabel = item.weight_kg
+                ? `${item.weight_kg} kg`
+                : item.variant_name;
               const showVariant =
-                item.variant_name &&
-                item.variant_name !== 'Standard' &&
-                item.variant_name !== item.product_name;
+                variantLabel &&
+                variantLabel !== 'Standard' &&
+                variantLabel !== itemName;
 
               return (
                 <tr key={idx}>
                   <td>
                     <span className="receipt-item-name">
-                      {item.product_name || 'Item'}
+                      {itemName}
                     </span>
                     {showVariant && (
                       <div className="receipt-item-variant">
-                        {item.variant_name}
+                        {variantLabel}
                       </div>
                     )}
                   </td>

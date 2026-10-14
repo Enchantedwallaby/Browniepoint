@@ -9,6 +9,7 @@ export type RouteId =
   | 'orders'
   | 'sales'
   | 'returns'
+  | 'expenses'
   | 'reports'
   | 'status'
   | 'audit';
@@ -30,6 +31,7 @@ export const PERMITTED_ROUTES_BY_ROLE: Record<UserRole, RouteId[]> = {
     'orders',
     'sales',
     'returns',
+    'expenses',
     'reports',
     'status',
     'audit',
@@ -41,6 +43,7 @@ export const PERMITTED_ROUTES_BY_ROLE: Record<UserRole, RouteId[]> = {
     'orders',
     'sales',
     'returns',
+    'expenses',
     'reports',
     'status',
   ],
@@ -51,6 +54,7 @@ export const PERMITTED_ROUTES_BY_ROLE: Record<UserRole, RouteId[]> = {
     'orders',
     'sales',
     'returns',
+    'expenses',
     'status',
   ],
 };

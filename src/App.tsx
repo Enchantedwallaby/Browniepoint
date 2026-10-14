@@ -10,6 +10,7 @@ import { TransfersPage } from '@/pages/TransfersPage';
 import { OrdersPage } from '@/pages/OrdersPage';
 import { SalesPage } from '@/pages/SalesPage';
 import { ReturnsPage } from '@/pages/ReturnsPage';
+import { ExpensesPage } from '@/pages/ExpensesPage';
 import { ReportsPage } from '@/pages/ReportsPage';
 import { StatusPage } from '@/pages/StatusPage';
 import { AccessDeniedPage } from '@/pages/AccessDeniedPage';
@@ -136,6 +137,8 @@ export default function App() {
         );
       case 'returns':
         return <ReturnsPage profile={profile} assignedBranch={assignedBranch} />;
+      case 'expenses':
+        return <ExpensesPage profile={profile} assignedBranch={assignedBranch} />;
       case 'reports':
         return <ReportsPage profile={profile} />;
       case 'status':

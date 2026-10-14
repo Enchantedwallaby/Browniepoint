@@ -1,0 +1,263 @@
+/* ═══════════════════════════════════════════════════════════════
+   BROWNIE POINT — Stock Dispatch / Transfer Print Stylesheet
+   Target: Normal office printer (A4 paper), e.g. Epson L3250
+   *
+   Activated by adding `printing-dispatch` class to <body>
+   before calling window.print(), and removed after printing.
+   ═══════════════════════════════════════════════════════════════ */
+
+@media screen {
+  .dispatch-print-area {
+    /* Hidden on screen — only rendered for print */
+    display: none !important;
+  }
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm 12mm;
+  }
+
+  /* When body has .printing-dispatch, we are printing a dispatch document,
+     NOT a thermal receipt. Override any thermal receipt CSS. */
+  body.printing-dispatch * {
+    visibility: visible !important;
+  }
+
+  body.printing-dispatch {
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    overflow: visible !important;
+  }
+
+  body.printing-dispatch html,
+  body.printing-dispatch #root {
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+  }
+
+  /* Hide the receipt wrapper when printing a dispatch */
+  body.printing-dispatch .receipt-print-wrapper {
+    display: none !important;
+  }
+
+  /* Hide everything except the dispatch document */
+  body.printing-dispatch #root > *:not(.dispatch-print-area) {
+    display: none !important;
+  }
+
+  /* Show only the dispatch print area */
+  body.printing-dispatch .dispatch-print-area {
+    display: block !important;
+    position: static !important;
+    visibility: visible !important;
+    width: 100% !important;
+    max-width: 210mm !important;
+    margin: 0 auto !important;
+    padding: 10mm !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-size: 11pt !important;
+    line-height: 1.4 !important;
+  }
+
+  body.printing-dispatch .dispatch-print-area * {
+    visibility: visible !important;
+    color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Dispatch document typography */
+  body.printing-dispatch .dispatch-doc-title {
+    font-size: 18pt !important;
+    font-weight: 900 !important;
+    text-align: center !important;
+    margin: 0 !important;
+    color: #000 !important;
+  }
+
+  body.printing-dispatch .dispatch-doc-subtitle {
+    font-size: 11pt !important;
+    font-weight: 700 !important;
+    text-align: center !important;
+    text-transform: uppercase !important;
+    letter-spacing: 1pt !important;
+    color: #333 !important;
+    margin: 2mm 0 0 0 !important;
+  }
+
+  body.printing-dispatch .dispatch-doc-date {
+    font-size: 9pt !important;
+    text-align: center !important;
+    color: #666 !important;
+    margin: 2mm 0 4mm 0 !important;
+  }
+
+  body.printing-dispatch .dispatch-doc-ref {
+    font-size: 9pt !important;
+    text-align: center !important;
+    font-family: 'Courier New', Courier, monospace !important;
+    color: #333 !important;
+    margin: 1mm 0 3mm 0 !important;
+  }
+
+  /* Info grid */
+  body.printing-dispatch .dispatch-info-grid {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 3mm !important;
+    border: 1px solid #ccc !important;
+    border-radius: 2mm !important;
+    padding: 4mm !important;
+    margin: 4mm 0 !important;
+    background: #f9f9f9 !important;
+    font-size: 9pt !important;
+  }
+
+  body.printing-dispatch .dispatch-info-label {
+    font-size: 8pt !important;
+    color: #666 !important;
+    font-weight: 500 !important;
+    margin: 0 !important;
+  }
+
+  body.printing-dispatch .dispatch-info-value {
+    font-size: 10pt !important;
+    font-weight: 700 !important;
+    color: #000 !important;
+    margin: 0.5mm 0 0 0 !important;
+  }
+
+  /* Items table */
+  body.printing-dispatch .dispatch-items-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    font-size: 9pt !important;
+    margin: 4mm 0 !important;
+  }
+
+  body.printing-dispatch .dispatch-items-table th {
+    background: #333 !important;
+    color: #fff !important;
+    font-weight: 700 !important;
+    font-size: 8pt !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5pt !important;
+    padding: 2.5mm 3mm !important;
+    text-align: left !important;
+    border: 1px solid #333 !important;
+  }
+
+  body.printing-dispatch .dispatch-items-table th.text-right {
+    text-align: right !important;
+  }
+
+  body.printing-dispatch .dispatch-items-table td {
+    padding: 2mm 3mm !important;
+    border: 1px solid #ddd !important;
+    vertical-align: top !important;
+    color: #000 !important;
+  }
+
+  body.printing-dispatch .dispatch-items-table tbody tr:nth-child(even) td {
+    background: #f5f5f5 !important;
+  }
+
+  body.printing-dispatch .dispatch-items-table tfoot td {
+    font-weight: 900 !important;
+    font-size: 10pt !important;
+    background: #eee !important;
+    border-top: 2px solid #333 !important;
+    padding: 2.5mm 3mm !important;
+  }
+
+  /* Notes */
+  body.printing-dispatch .dispatch-notes-box {
+    border: 1px solid #ccc !important;
+    border-radius: 2mm !important;
+    padding: 3mm 4mm !important;
+    margin: 3mm 0 !important;
+    font-size: 9pt !important;
+    background: #fffbeb !important;
+  }
+
+  body.printing-dispatch .dispatch-notes-label {
+    font-weight: 700 !important;
+    color: #333 !important;
+    font-size: 8pt !important;
+  }
+
+  /* Signature line */
+  body.printing-dispatch .dispatch-signature-grid {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10mm !important;
+    margin: 10mm 0 0 0 !important;
+    font-size: 9pt !important;
+  }
+
+  body.printing-dispatch .dispatch-signature-box {
+    text-align: center !important;
+  }
+
+  body.printing-dispatch .dispatch-signature-line {
+    border-top: 1px solid #000 !important;
+    margin: 12mm 0 1.5mm 0 !important;
+    width: 100% !important;
+  }
+
+  body.printing-dispatch .dispatch-signature-text {
+    font-size: 8pt !important;
+    color: #333 !important;
+    font-weight: 600 !important;
+  }
+
+  /* Footer */
+  body.printing-dispatch .dispatch-footer {
+    text-align: center !important;
+    font-size: 7pt !important;
+    color: #999 !important;
+    margin: 8mm 0 0 0 !important;
+    border-top: 1px dashed #ccc !important;
+    padding-top: 2mm !important;
+  }
+
+  /* Prevent page breaks inside rows */
+  body.printing-dispatch .dispatch-items-table tr {
+    page-break-inside: avoid !important;
+  }
+
+  /* In-modal fallback styles for Ctrl+P */
+  .dispatch-modal-backdrop {
+    position: static !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    padding: 0 !important;
+    z-index: auto !important;
+  }
+
+  .dispatch-modal-container {
+    max-width: 100% !important;
+    box-shadow: none !important;
+    border: none !important;
+    overflow: visible !important;
+  }
+
+  .dispatch-modal-header,
+  .dispatch-modal-footer {
+    display: none !important;
+  }
+
+  .dispatch-modal-body {
+    max-height: none !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+}

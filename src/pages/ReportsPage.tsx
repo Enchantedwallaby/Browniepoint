@@ -12,6 +12,7 @@ import {
   type ReturnsReportData,
   type TransfersReportData,
   type MovementsReportData,
+  type ExpensesReportData,
 } from '@/services/reportService';
 import type { Branch, Profile, ReturnReason, ReturnStatus, TransferStatus } from '@/types/database';
 import {
@@ -41,6 +42,7 @@ const reportLabels: Record<BusinessReportType, string> = {
   returns: 'Returns',
   transfers: 'Transfers',
   movements: 'Inventory Movements',
+  expenses: 'Daily Expenses',
 };
 
 const reasonLabels: Record<ReturnReason, string> = {
@@ -218,6 +220,57 @@ function exportBundle(type: BusinessReportType, data: BusinessReportData): Repor
     };
   }
 
+  if (type === 'expenses') {
+    const expenses = data as ExpensesReportData;
+    return {
+      summary: [
+        { metric: 'Total Expenses (INR)', value: expenses.summary.totalExpenses },
+        { metric: 'Cash Expenses (INR)', value: expenses.summary.cashExpenses },
+        { metric: 'UPI / Online Expenses (INR)', value: expenses.summary.onlineExpenses },
+        { metric: 'Total Number of Expense Transactions', value: expenses.summary.count },
+      ],
+      details: expenses.rows.map((row) => ({
+        Date: row.date,
+        Branch: row.branch,
+        'Reason / Description': row.reason,
+        Category: row.category,
+        'Payment Method': row.paymentMethod,
+        'Amount (INR)': row.amount,
+        'Recorded By': row.employee,
+        Notes: row.notes,
+        'Expense ID': row.id,
+      })),
+      extraSheets: [
+        {
+          name: 'Payment Methods',
+          rows: expenses.payments.map((row) => ({
+            'Payment Method': row.paymentMethod,
+            'Transaction Count': row.count,
+            'Total Amount (INR)': row.total,
+          })),
+        },
+        {
+          name: 'Daily',
+          rows: expenses.daily.map((row) => ({
+            Date: row.date,
+            'Transaction Count': row.count,
+            'Cash (INR)': row.cash,
+            'UPI / Online (INR)': row.online,
+            'Total Expenses (INR)': row.totalExpenses,
+          })),
+        },
+        {
+          name: 'Categories',
+          rows: expenses.categories.map((row) => ({
+            Category: row.category,
+            'Transaction Count': row.count,
+            'Total Amount (INR)': row.total,
+          })),
+        },
+      ],
+    };
+  }
+
   const movements = data as MovementsReportData;
   return {
     summary: [{ metric: 'Inventory Movements', value: movements.rows.length }],
@@ -230,6 +283,7 @@ function reportHasData(type: BusinessReportType, data: BusinessReportData): bool
   if (type === 'sales') return (data as SalesReportData).transactions.length > 0;
   if (type === 'returns') return (data as ReturnsReportData).rows.length > 0;
   if (type === 'transfers') return (data as TransfersReportData).summary.transfers > 0;
+  if (type === 'expenses') return (data as ExpensesReportData).rows.length > 0;
   return (data as MovementsReportData).rows.length > 0;
 }
 
@@ -261,8 +315,13 @@ function Table({ headers, rows }: { headers: string[]; rows: React.ReactNode[][]
 }
 
 function MetricCards({ values }: { values: { label: string; value: string }[] }) {
+  const colsClass = values.length === 4
+    ? 'xl:grid-cols-4'
+    : values.length === 3
+    ? 'xl:grid-cols-3'
+    : 'xl:grid-cols-5';
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+    <div className={`grid grid-cols-1 gap-3 sm:grid-cols-2 ${colsClass}`}>
       {values.map((metric) => (
         <Card key={metric.label}>
           <p className="text-xs font-medium text-slate-500">{metric.label}</p>
@@ -298,7 +357,12 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ profile }) => {
   const isLoading = isDateRangeValid && !isReportCurrent;
   const filters = useMemo<ReportFilters | null>(() => {
     if (!isDateRangeValid) return null;
-    return { ...dateInputBounds(fromDate, toDate), branchId };
+    return {
+      ...dateInputBounds(fromDate, toDate),
+      branchId,
+      fromDate,
+      toDate,
+    };
   }, [fromDate, toDate, branchId, isDateRangeValid]);
 
   useEffect(() => {
@@ -320,6 +384,7 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ profile }) => {
         if (reportType === 'sales') data = await reportService.getSalesReport(filters!);
         else if (reportType === 'returns') data = await reportService.getReturnsReport(filters!);
         else if (reportType === 'transfers') data = await reportService.getTransfersReport(filters!);
+        else if (reportType === 'expenses') data = await reportService.getExpensesReport(filters!);
         else data = await reportService.getMovementsReport(filters!);
 
         if (active) {
@@ -349,6 +414,7 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ profile }) => {
     if (reportType === 'sales') return (reportData as SalesReportData).transactions.length === 0;
     if (reportType === 'returns') return (reportData as ReturnsReportData).rows.length === 0;
     if (reportType === 'transfers') return (reportData as TransfersReportData).summary.transfers === 0;
+    if (reportType === 'expenses') return (reportData as ExpensesReportData).rows.length === 0;
     return (reportData as MovementsReportData).rows.length === 0;
   }, [reportData, reportType, isReportCurrent]);
 
@@ -374,16 +440,18 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ profile }) => {
 
     if (!filters) throw new Error('Select a valid date range before exporting.');
 
-    const [sales, returns, transfers, movements] = await Promise.all([
+    const [sales, returns, transfers, movements, expenses] = await Promise.all([
       reportService.getSalesReport(filters),
       reportService.getReturnsReport(filters),
       reportService.getTransfersReport(filters),
       reportService.getMovementsReport(filters),
+      reportService.getExpensesReport(filters),
     ]);
     const sections: ExportSection[] = [
       { type: 'sales', data: sales },
       { type: 'returns', data: returns },
       { type: 'transfers', data: transfers },
+      { type: 'expenses', data: expenses },
       { type: 'movements', data: movements },
     ];
 
@@ -540,6 +608,7 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ profile }) => {
   const returnsData = reportType === 'returns' && reportData ? reportData as ReturnsReportData : null;
   const transfersData = reportType === 'transfers' && reportData ? reportData as TransfersReportData : null;
   const movementsData = reportType === 'movements' && reportData ? reportData as MovementsReportData : null;
+  const expensesData = reportType === 'expenses' && reportData ? reportData as ExpensesReportData : null;
   const presetOptions: { value: DatePreset; label: string }[] = [
     { value: 'TODAY', label: 'Today' },
     { value: 'YESTERDAY', label: 'Yesterday' },
@@ -760,6 +829,101 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ profile }) => {
             rows={movementsData.rows.map((row) => [formatDate(row.date, { dateStyle: 'medium', timeStyle: 'short' }), row.product, row.batch, row.branch, row.movementType, formatQuantity(row.quantity), row.reference])}
           />
         </Card>
+      )}
+
+      {!isLoading && isReportCurrent && !reportError && !reportIsEmpty && expensesData && (
+        <div className="space-y-6">
+          <MetricCards values={[
+            { label: 'Total Expenses', value: formatCurrency(expensesData.summary.totalExpenses) },
+            { label: 'Cash Expenses', value: formatCurrency(expensesData.summary.cashExpenses) },
+            { label: 'UPI / Online Expenses', value: formatCurrency(expensesData.summary.onlineExpenses) },
+            { label: 'Total Transactions', value: expensesData.summary.count.toLocaleString('en-IN') },
+          ]} />
+
+          <div className="grid gap-6 xl:grid-cols-2">
+            <Card title="Payment Method Breakdown" subtitle="Cash vs UPI/Online distribution for selected range">
+              <Table
+                headers={['Payment Method', 'Transactions', 'Total Amount', 'Share']}
+                rows={expensesData.payments.map((row) => {
+                  const sharePercent =
+                    expensesData.summary.totalExpenses > 0
+                      ? ((row.total / expensesData.summary.totalExpenses) * 100).toFixed(1)
+                      : '0.0';
+                  return [
+                    <span key={row.paymentMethod} className="inline-flex items-center gap-1.5 font-medium text-slate-800">
+                      <Badge variant={row.paymentMethod === 'Cash' ? 'success' : 'primary'}>
+                        {row.paymentMethod}
+                      </Badge>
+                    </span>,
+                    row.count.toLocaleString('en-IN'),
+                    <span key="tot" className="font-semibold text-slate-900">{formatCurrency(row.total)}</span>,
+                    <div key="bar" className="flex items-center gap-2">
+                      <div className="h-2 w-20 overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className={`h-full ${row.paymentMethod === 'Cash' ? 'bg-emerald-500' : 'bg-brand-600'}`}
+                          style={{ width: `${Math.min(100, Number(sharePercent))}%` }}
+                        />
+                      </div>
+                      <span className="text-xs text-slate-600">{sharePercent}%</span>
+                    </div>,
+                  ];
+                })}
+              />
+            </Card>
+
+            <Card title="Category Breakdown" subtitle="Expenses by category">
+              <Table
+                headers={['Category', 'Transactions', 'Total Expenses', 'Share']}
+                rows={expensesData.categories.map((row) => {
+                  const share =
+                    expensesData.summary.totalExpenses > 0
+                      ? ((row.total / expensesData.summary.totalExpenses) * 100).toFixed(1)
+                      : '0.0';
+                  return [
+                    <span key={row.category} className="font-medium text-slate-800">{row.category}</span>,
+                    row.count.toLocaleString('en-IN'),
+                    <span key="tot" className="font-semibold text-slate-900">{formatCurrency(row.total)}</span>,
+                    <span key="pct" className="text-xs text-slate-500">{share}%</span>,
+                  ];
+                })}
+              />
+            </Card>
+          </div>
+
+          <Card title="Daily Expenses Breakdown" subtitle="Expenses grouped by local calendar date">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {expensesData.daily.map((day) => (
+                <div key={day.date} className="rounded-lg border border-slate-200 bg-slate-50/50 p-4">
+                  <h3 className="font-semibold text-slate-900">{formatDate(`${day.date}T12:00:00`, { month: 'long', day: 'numeric', year: 'numeric' })}</h3>
+                  <p className="mt-2 text-lg font-bold text-rose-700">{formatCurrency(day.totalExpenses)}</p>
+                  <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-600">
+                    <dt>Transactions</dt><dd className="text-right font-medium text-slate-800">{day.count}</dd>
+                    <dt>Cash</dt><dd className="text-right font-medium text-slate-800">{formatCurrency(day.cash)}</dd>
+                    <dt>UPI / Online</dt><dd className="text-right font-medium text-slate-800">{formatCurrency(day.online)}</dd>
+                  </dl>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          <Card title="Expense Details" subtitle={`${dateRangeLabel} · ${selectedBranchName}`}>
+            <Table
+              headers={['Date', 'Branch', 'Reason / Description', 'Category', 'Payment Method', 'Recorded By', 'Amount']}
+              rows={expensesData.rows.map((row) => [
+                formatDate(`${row.date}T12:00:00`, { dateStyle: 'medium' }),
+                row.branch,
+                <div key={row.id}>
+                  <p className="font-medium text-slate-900">{row.reason}</p>
+                  {row.notes && <p className="mt-0.5 text-xs text-slate-500 italic">{row.notes}</p>}
+                </div>,
+                <Badge key="cat" variant="secondary">{row.category}</Badge>,
+                <Badge key="pm" variant={row.paymentMethod === 'Cash' ? 'success' : 'primary'}>{row.paymentMethod}</Badge>,
+                row.employee,
+                <span key="amt" className="font-semibold text-rose-700">{formatCurrency(row.amount)}</span>,
+              ])}
+            />
+          </Card>
+        </div>
       )}
 
       {!isLoading && isReportCurrent && !reportError && reportData && (

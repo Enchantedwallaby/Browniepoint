@@ -27,6 +27,8 @@ import {
   FileText,
   Wifi,
   WifiOff,
+  Scale,
+  Cake,
 } from 'lucide-react';
 
 interface SalesPageProps {
@@ -35,12 +37,20 @@ interface SalesPageProps {
 }
 
 interface CartItem extends CreateSaleItemParam {
+  cart_item_id: string;
   product_id: string;
   product_name: string;
   variant_name: string;
   available_stock: number;
   is_custom_cake_product: boolean;
+  weight_kg?: number;
+  per_kg_rate?: number;
+  custom_item_name?: string;
+  deduct_qty?: number;
+  raw_quantity?: string;
 }
+
+export type DiscountType = 'FIXED' | 'PERCENT';
 
 export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch }) => {
   const isOwner = profile.role === 'OWNER';
@@ -78,15 +88,34 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
+  const [discountType, setDiscountType] = useState<DiscountType>('FIXED');
   const [discountInput, setDiscountInput] = useState('0');
   const [amountCash, setAmountCash] = useState<string>('');
   const [amountOnline, setAmountOnline] = useState<string>('');
   const [cashReceived, setCashReceived] = useState<string>('');
   const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
   const [saleNotes, setSaleNotes] = useState('');
   const [processingCheckout, setProcessingCheckout] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [recentCompletedSale, setRecentCompletedSale] = useState<SaleDetailed | null>(null);
+
+  // Custom Weight Modal State
+  const [weightModalProduct, setWeightModalProduct] = useState<ProductWithVariants | null>(null);
+  const [customWeightInput, setCustomWeightInput] = useState<string>('1');
+  const [weightCakeQty, setWeightCakeQty] = useState<number>(1);
+  const [weightModalError, setWeightModalError] = useState<string | null>(null);
+
+  // Custom Cake Modal State
+  const [showCustomCakeModal, setShowCustomCakeModal] = useState(false);
+  const [customCakeDescription, setCustomCakeDescription] = useState('');
+  const [customCakeWeight, setCustomCakeWeight] = useState('');
+  const [customCakePrice, setCustomCakePrice] = useState('');
+  const [customCakeQty, setCustomCakeQty] = useState<number>(1);
+  const [customCakeCustomerName, setCustomCakeCustomerName] = useState('');
+  const [customCakeCustomerPhone, setCustomCakeCustomerPhone] = useState('');
+  const [customCakeInstructions, setCustomCakeInstructions] = useState('');
+  const [customCakeError, setCustomCakeError] = useState<string | null>(null);
 
   // History State
   const [salesHistory, setSalesHistory] = useState<SaleDetailed[]>([]);
@@ -127,14 +156,18 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
     setSelectedSaleDetail(null);
     setRecentCompletedSale(null);
     setCart([]);
+    setDiscountType('FIXED');
     setDiscountInput('0');
     setAmountCash('');
     setAmountOnline('');
     setCashReceived('');
     setCustomerName('');
+    setCustomerPhone('');
     setSaleNotes('');
     setCheckoutError(null);
     setPrintNotice(null);
+    setWeightModalProduct(null);
+    setShowCustomCakeModal(false);
   }, [profile.id, effectiveBranchId]);
 
   // Direct ESC/POS Thermal Print Action via QZ Tray
@@ -286,10 +319,79 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
     });
   }, [products, selectedCategory, searchQuery]);
 
-  // Add Item to Cart
+  // Helper: determine if a product supports custom weight sales
+  const supportsVariableWeight = (product: ProductWithVariants): boolean => {
+    if (product.name === 'Custom Cake') return false;
+    const cat = product.category.toLowerCase();
+    if (cat.includes('cake')) return true;
+    return product.variants.some((v) => {
+      const n = v.name.toLowerCase();
+      return n.includes('kg') || v.quantity_unit === 'KG' || v.quantity_unit === 'HALF_KG';
+    });
+  };
+
+  // Helper: determine rate per kg from existing pricing rules
+  const getPerKgRate = (product: ProductWithVariants): { rate: number; referenceVariant: ProductWithVariants['variants'][0] | null } => {
+    // 1. Look for 1 KG variant
+    const oneKgVariant =
+      product.variants.find((v) => {
+        const n = v.name.toLowerCase();
+        return (n.includes('1 kg') || n.includes('1kg')) && !n.includes('0.5');
+      }) ||
+      product.variants.find((v) => v.quantity_unit === 'KG' && Number(v.quantity_value) === 1);
+
+    if (oneKgVariant) {
+      const rule = (oneKgVariant.pricing_rules || []).find((r) => r.active && r.base_price != null);
+      if (rule?.base_price != null) {
+        return { rate: Number(rule.base_price), referenceVariant: oneKgVariant };
+      }
+    }
+
+    // 2. Look for PER_KG pricing rule
+    for (const v of product.variants) {
+      const rule = (v.pricing_rules || []).find((r) => r.active && r.pricing_type === 'PER_KG' && r.base_price != null);
+      if (rule?.base_price != null) {
+        return { rate: Number(rule.base_price), referenceVariant: v };
+      }
+    }
+
+    // 3. Look for 0.5 KG variant (rate = base_price * 2)
+    const halfKgVariant = product.variants.find((v) => {
+      const n = v.name.toLowerCase();
+      return n.includes('0.5 kg') || n.includes('half kg') || v.quantity_unit === 'HALF_KG';
+    });
+
+    if (halfKgVariant) {
+      const rule = (halfKgVariant.pricing_rules || []).find((r) => r.active && r.base_price != null);
+      if (rule?.base_price != null) {
+        return { rate: Number(rule.base_price) * 2, referenceVariant: halfKgVariant };
+      }
+    }
+
+    // 4. Fallback to any active priced variant
+    for (const v of product.variants) {
+      const rule = (v.pricing_rules || []).find((r) => r.active && r.base_price != null);
+      if (rule?.base_price != null) {
+        return { rate: Number(rule.base_price), referenceVariant: v };
+      }
+    }
+
+    return { rate: 0, referenceVariant: null };
+  };
+
+  // Open Custom Weight Modal for Cake
+  const handleOpenWeightModal = (product: ProductWithVariants) => {
+    setWeightModalProduct(product);
+    setCustomWeightInput('1');
+    setWeightCakeQty(1);
+    setWeightModalError(null);
+  };
+
+  // Add Item to Cart (Standard Predefined Variant)
   const handleAddToCart = (product: ProductWithVariants, variant: ProductWithVariants['variants'][0]) => {
     setCheckoutError(null);
-    const existingIndex = cart.findIndex((i) => i.product_variant_id === variant.id);
+    const cartItemId = `${variant.id}-std`;
+    const existingIndex = cart.findIndex((i) => i.cart_item_id === cartItemId);
     const availableStock = stockByVariant.get(variant.id) || 0;
 
     // Determine default pricing
@@ -327,6 +429,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
       setCart([
         ...cart,
         {
+          cart_item_id: cartItemId,
           product_id: product.id,
           product_variant_id: variant.id,
           product_name: product.name,
@@ -341,19 +444,161 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
     }
   };
 
-  // Update Item Quantity in Cart
-  const handleUpdateQuantity = (variantId: string, delta: number) => {
+  // Add Custom Weight Cake to Cart
+  const handleAddCustomWeightToCart = (product: ProductWithVariants, weight: number, qty: number) => {
+    setCheckoutError(null);
+    const { rate, referenceVariant } = getPerKgRate(product);
+
+    if (!referenceVariant || rate <= 0) {
+      setWeightModalError(`No per-kg rate found for "${product.name}".`);
+      return;
+    }
+
+    if (!weight || weight <= 0) {
+      setWeightModalError('Please enter a valid cake weight greater than 0 kg.');
+      return;
+    }
+
+    if (!qty || qty <= 0) {
+      setWeightModalError('Quantity must be at least 1.');
+      return;
+    }
+
+    // Precise rupee calculation: weight * rate
+    const calculatedUnitPrice = Math.round(weight * rate * 100) / 100;
+    const totalWeightToDeduct = Math.round(weight * qty * 1000) / 1000;
+    const availableStock = stockByVariant.get(referenceVariant.id) || 0;
+
+    // Check stock for sub-branches (Main Branch does not require inventory balance)
+    if (!isMainBranchSale && totalWeightToDeduct > availableStock) {
+      setWeightModalError(
+        `Insufficient stock for "${product.name}". Requested total ${totalWeightToDeduct} kg (across ${qty} cake${qty > 1 ? 's' : ''}), but available stock is ${availableStock} kg.`
+      );
+      return;
+    }
+
+    const cartItemId = `${referenceVariant.id}-wt-${weight}-${Date.now()}`;
+    const weightLabel = `${weight} kg`;
+
+    setCart((prev) => [
+      ...prev,
+      {
+        cart_item_id: cartItemId,
+        product_id: product.id,
+        product_variant_id: referenceVariant.id,
+        product_name: product.name,
+        variant_name: weightLabel,
+        quantity: qty,
+        unit_price: calculatedUnitPrice,
+        weight_kg: weight,
+        per_kg_rate: rate,
+        deduct_qty: totalWeightToDeduct,
+        is_custom_price: false,
+        notes: `Weight: ${weight} kg (@ ₹${rate}/kg)`,
+        available_stock: isMainBranchSale ? Number.POSITIVE_INFINITY : availableStock,
+        is_custom_cake_product: false,
+      },
+    ]);
+
+    setWeightModalProduct(null);
+  };
+
+  // Add Custom Cake to Cart
+  const handleAddCustomCakeToCart = () => {
+    setCustomCakeError(null);
+    const desc = customCakeDescription.trim();
+    if (!desc) {
+      setCustomCakeError('Please enter a cake name or description.');
+      return;
+    }
+
+    const price = parseFloat(customCakePrice);
+    if (isNaN(price) || price <= 0) {
+      setCustomCakeError('Please enter a valid price greater than ₹0.');
+      return;
+    }
+
+    const qty = customCakeQty > 0 ? customCakeQty : 1;
+    const weightVal = parseFloat(customCakeWeight);
+    const weightNum = !isNaN(weightVal) && weightVal > 0 ? weightVal : undefined;
+
+    // Find Custom Cake variant in catalogue
+    const customCakeProd = products.find((p) => p.name === 'Custom Cake');
+    const customCakeVariant =
+      customCakeProd?.variants?.[0] || {
+        id: '64bf7bb8-64f7-4edf-a2f6-d0bb786381c2',
+        name: 'Custom Order',
+      };
+
+    const cartItemId = `custom-cake-${Date.now()}`;
+    const instructions = customCakeInstructions.trim();
+    let itemNotes = instructions || '';
+    if (customCakeCustomerPhone.trim()) {
+      itemNotes = itemNotes ? `${itemNotes} | Phone: ${customCakeCustomerPhone.trim()}` : `Phone: ${customCakeCustomerPhone.trim()}`;
+    }
+
+    setCart((prev) => [
+      ...prev,
+      {
+        cart_item_id: cartItemId,
+        product_id: customCakeProd?.id || '452d989a-0131-43c0-bd5f-c0fc35b967a8',
+        product_variant_id: customCakeVariant.id,
+        product_name: 'Custom Cake',
+        custom_item_name: desc,
+        variant_name: weightNum ? `${weightNum} kg` : 'Custom Order',
+        quantity: qty,
+        unit_price: Math.round(price * 100) / 100,
+        weight_kg: weightNum,
+        is_custom_price: true,
+        notes: itemNotes || undefined,
+        available_stock: Number.POSITIVE_INFINITY,
+        is_custom_cake_product: true,
+      },
+    ]);
+
+    // Pre-populate checkout customer details if entered
+    if (customCakeCustomerName.trim() && !customerName) {
+      setCustomerName(customCakeCustomerName.trim());
+    }
+    if (customCakeCustomerPhone.trim() && !customerPhone) {
+      setCustomerPhone(customCakeCustomerPhone.trim());
+    }
+
+    // Reset modal state
+    setShowCustomCakeModal(false);
+    setCustomCakeDescription('');
+    setCustomCakeWeight('');
+    setCustomCakePrice('');
+    setCustomCakeQty(1);
+    setCustomCakeCustomerName('');
+    setCustomCakeCustomerPhone('');
+    setCustomCakeInstructions('');
+    setCustomCakeError(null);
+  };
+
+  // Update Item Quantity in Cart by cart_item_id (+ / - buttons)
+  const handleUpdateQuantity = (cartItemId: string, delta: number) => {
+    setCheckoutError(null);
     setCart((prev) =>
       prev
         .map((item) => {
-          if (item.product_variant_id === variantId) {
+          if (item.cart_item_id === cartItemId) {
             const newQty = item.quantity + delta;
             if (newQty <= 0) return null;
-            if (!isMainBranchSale && !item.is_custom_price && newQty > item.available_stock) {
+            if (!isMainBranchSale && !item.is_custom_price && !item.weight_kg && newQty > item.available_stock) {
               setCheckoutError(`Stock limit reached (${item.available_stock} units available).`);
               return item;
             }
-            return { ...item, quantity: newQty };
+            if (!isMainBranchSale && item.weight_kg && (item.weight_kg * newQty) > item.available_stock) {
+              setCheckoutError(`Stock limit reached (${item.available_stock} kg available).`);
+              return item;
+            }
+            return {
+              ...item,
+              quantity: newQty,
+              raw_quantity: undefined,
+              deduct_qty: item.weight_kg ? Math.round(item.weight_kg * newQty * 1000) / 1000 : newQty,
+            };
           }
           return item;
         })
@@ -361,32 +606,113 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
     );
   };
 
-  // Update Custom Price for custom items
-  const handleUpdateCustomPrice = (variantId: string, priceStr: string) => {
+  // Direct typing of quantity in cart item input
+  const handleDirectQuantityChange = (cartItemId: string, rawVal: string) => {
+    setCheckoutError(null);
+    setCart((prev) =>
+      prev.map((item) => {
+        if (item.cart_item_id !== cartItemId) return item;
+
+        // If user clears the input completely while typing, store raw string but keep last valid quantity
+        if (rawVal.trim() === '') {
+          return {
+            ...item,
+            raw_quantity: '',
+          };
+        }
+
+        const parsed = parseInt(rawVal, 10);
+        // Only accept positive whole numbers
+        if (isNaN(parsed) || parsed <= 0) {
+          return {
+            ...item,
+            raw_quantity: rawVal,
+          };
+        }
+
+        // Validate stock for standard products at sub-branches
+        if (!isMainBranchSale && !item.is_custom_price && !item.weight_kg && parsed > item.available_stock) {
+          setCheckoutError(`Stock limit reached for "${item.product_name}". Only ${item.available_stock} units available.`);
+          return {
+            ...item,
+            raw_quantity: rawVal,
+          };
+        }
+
+        // Validate stock for variable weight items at sub-branches
+        if (!isMainBranchSale && item.weight_kg && (item.weight_kg * parsed) > item.available_stock) {
+          const maxUnits = Math.floor(item.available_stock / item.weight_kg);
+          setCheckoutError(`Stock limit reached for "${item.product_name}". ${item.available_stock} kg available (max ${maxUnits} cake${maxUnits === 1 ? '' : 's'} of ${item.weight_kg} kg).`);
+          return {
+            ...item,
+            raw_quantity: rawVal,
+          };
+        }
+
+        return {
+          ...item,
+          quantity: parsed,
+          raw_quantity: String(parsed),
+          deduct_qty: item.weight_kg ? Math.round(item.weight_kg * parsed * 1000) / 1000 : parsed,
+        };
+      })
+    );
+  };
+
+  // Blur handler to ensure input resets to valid quantity if left empty or invalid
+  const handleDirectQuantityBlur = (cartItemId: string) => {
+    setCart((prev) =>
+      prev.map((item) => {
+        if (item.cart_item_id !== cartItemId) return item;
+        const parsed = parseInt(item.raw_quantity || '', 10);
+        const finalQty = !isNaN(parsed) && parsed > 0 ? parsed : (item.quantity > 0 ? item.quantity : 1);
+        return {
+          ...item,
+          quantity: finalQty,
+          raw_quantity: undefined,
+          deduct_qty: item.weight_kg ? Math.round(item.weight_kg * finalQty * 1000) / 1000 : finalQty,
+        };
+      })
+    );
+  };
+
+  // Update Custom Price for custom items by cart_item_id
+  const handleUpdateCustomPrice = (cartItemId: string, priceStr: string) => {
     const val = parseFloat(priceStr);
     const numPrice = isNaN(val) || val < 0 ? 0 : val;
     setCart((prev) =>
       prev.map((item) =>
-        item.product_variant_id === variantId
+        item.cart_item_id === cartItemId
           ? { ...item, unit_price: numPrice }
           : item
       )
     );
   };
 
-  // Remove Item from Cart
-  const handleRemoveFromCart = (variantId: string) => {
-    setCart((prev) => prev.filter((i) => i.product_variant_id !== variantId));
+  // Remove Item from Cart by cart_item_id
+  const handleRemoveFromCart = (cartItemId: string) => {
+    setCart((prev) => prev.filter((i) => i.cart_item_id !== cartItemId));
   };
 
   // Cart Calculations
   const grandTotal = useMemo(() => {
     return cart.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
   }, [cart]);
-  const discountAmount = Math.min(
-    grandTotal,
-    Math.max(0, Math.round((Number(discountInput) || 0) * 100) / 100)
-  );
+
+  const discountAmount = useMemo(() => {
+    const rawVal = parseFloat(discountInput) || 0;
+    if (rawVal <= 0 || grandTotal <= 0) return 0;
+
+    if (discountType === 'PERCENT') {
+      const pct = Math.min(100, Math.max(0, rawVal));
+      const calculated = (grandTotal * pct) / 100;
+      return Math.min(grandTotal, Math.round(calculated * 100) / 100);
+    }
+
+    // FIXED (Rupees)
+    return Math.min(grandTotal, Math.round(rawVal * 100) / 100);
+  }, [grandTotal, discountInput, discountType]);
+
   const finalTotal = Math.max(0, Math.round((grandTotal - discountAmount) * 100) / 100);
 
   // Mixed Payment Live Balance calculation
@@ -449,6 +775,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
             ? 0
             : finalTotal,
         customer_name: customerName,
+        customer_phone: customerPhone,
         notes: saleNotes,
         performed_by: profile.id,
         items: cart.map((i) => ({
@@ -458,17 +785,23 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
           is_custom_price: i.is_custom_price,
           product_name: i.product_name,
           variant_name: i.variant_name,
+          weight_kg: i.weight_kg,
+          custom_item_name: i.custom_item_name,
+          deduct_qty: i.deduct_qty,
+          notes: i.notes,
         })),
       });
 
       // Show receipt modal & clear state
       setRecentCompletedSale(completed);
       setCart([]);
+      setDiscountType('FIXED');
       setDiscountInput('0');
       setAmountCash('');
       setAmountOnline('');
       setCashReceived('');
       setCustomerName('');
+      setCustomerPhone('');
       setSaleNotes('');
 
       // Auto direct thermal print via QZ Tray if POS-80C is ready
@@ -642,23 +975,38 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
           <div className="lg:col-span-7 space-y-4">
             {/* Search & Category Filter Bar */}
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
-              <div className="relative">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search product name, variant, category..."
-                  className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search product name, variant, category..."
+                    className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomCakeError(null);
+                    setShowCustomCakeModal(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-brand-800 hover:bg-brand-900 text-white text-xs font-bold rounded-lg shadow-sm transition-all shrink-0 cursor-pointer"
+                  title="Record a custom cake order with manual pricing"
+                >
+                  <Cake className="w-4 h-4 text-amber-300" />
+                  Custom Cake
+                </button>
               </div>
 
               {/* Category Pills */}
@@ -787,6 +1135,23 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
                           </div>
                         );
                       })}
+
+                      {supportsVariableWeight(prod) && (
+                        <div className="pt-2 border-t border-dashed border-slate-200 flex items-center justify-between">
+                          <span className="text-[11px] text-slate-500 font-medium flex items-center gap-1">
+                            <Scale className="w-3.5 h-3.5 text-brand-700" />
+                            Sell by Weight:
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenWeightModal(prod)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-brand-800 bg-brand-50 hover:bg-brand-100 border border-brand-200 rounded-lg transition-colors cursor-pointer"
+                            title="Enter exact cake weight (e.g. 0.75 kg, 1.5 kg, 2 kg)"
+                          >
+                            Custom Weight
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -829,18 +1194,34 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
             ) : (
               <div className="space-y-3 max-h-[280px] overflow-y-auto pr-1 divide-y divide-slate-100">
                 {cart.map((item) => (
-                  <div key={item.product_variant_id} className="pt-2.5 first:pt-0 space-y-2">
+                  <div key={item.cart_item_id} className="pt-2.5 first:pt-0 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <h5 className="text-xs font-bold text-slate-900 leading-tight">
-                          {item.product_name}
+                          {item.custom_item_name || item.product_name}
                         </h5>
-                        <p className="text-[11px] text-slate-500">{item.variant_name}</p>
+                        <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                          {item.weight_kg ? (
+                            <span className="text-[10px] font-bold text-brand-800 bg-brand-50 px-1.5 py-0.5 rounded border border-brand-200">
+                              Weight: {item.weight_kg} kg {item.per_kg_rate ? `(@ ₹${item.per_kg_rate}/kg)` : ''}
+                            </span>
+                          ) : (
+                            <p className="text-[11px] text-slate-500">{item.variant_name}</p>
+                          )}
+                          {item.is_custom_cake_product && (
+                            <span className="text-[9px] font-bold text-amber-800 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">
+                              Custom Cake
+                            </span>
+                          )}
+                        </div>
+                        {item.notes && !item.notes.startsWith('Weight:') && (
+                          <p className="text-[10px] text-slate-500 italic mt-0.5">{item.notes}</p>
+                        )}
                       </div>
 
                       <button
-                        onClick={() => handleRemoveFromCart(item.product_variant_id)}
-                        className="text-slate-400 hover:text-rose-600 p-1"
+                        onClick={() => handleRemoveFromCart(item.cart_item_id)}
+                        className="text-slate-400 hover:text-rose-600 p-1 cursor-pointer"
                         title="Remove item"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -848,20 +1229,31 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
                     </div>
 
                     <div className="flex items-center justify-between gap-2">
-                      {/* Quantity Controls */}
-                      <div className="flex items-center border border-slate-300 rounded-lg bg-slate-50">
+                      {/* Quantity Controls: - button, direct input, + button */}
+                      <div className="flex items-center border border-slate-300 rounded-lg bg-white overflow-hidden shadow-xs">
                         <button
-                          onClick={() => handleUpdateQuantity(item.product_variant_id, -1)}
-                          className="px-2 py-1 text-slate-600 hover:text-brand-900"
+                          type="button"
+                          onClick={() => handleUpdateQuantity(item.cart_item_id, -1)}
+                          className="px-2 py-1 bg-slate-50 hover:bg-slate-100 text-slate-600 hover:text-brand-900 cursor-pointer transition-colors"
+                          title="Decrease quantity"
                         >
                           <Minus className="w-3 h-3" />
                         </button>
-                        <span className="px-2 py-0.5 text-xs font-bold text-slate-900">
-                          {item.quantity}
-                        </span>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={item.raw_quantity !== undefined ? item.raw_quantity : item.quantity}
+                          onChange={(e) => handleDirectQuantityChange(item.cart_item_id, e.target.value)}
+                          onBlur={() => handleDirectQuantityBlur(item.cart_item_id)}
+                          className="w-12 text-center text-xs font-bold text-slate-900 bg-white py-1 focus:outline-none focus:ring-1 focus:ring-brand-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          title="Click to type quantity directly"
+                        />
                         <button
-                          onClick={() => handleUpdateQuantity(item.product_variant_id, 1)}
-                          className="px-2 py-1 text-slate-600 hover:text-brand-900"
+                          type="button"
+                          onClick={() => handleUpdateQuantity(item.cart_item_id, 1)}
+                          className="px-2 py-1 bg-slate-50 hover:bg-slate-100 text-slate-600 hover:text-brand-900 cursor-pointer transition-colors"
+                          title="Increase quantity"
                         >
                           <Plus className="w-3 h-3" />
                         </button>
@@ -878,7 +1270,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
                               step="10"
                               value={item.unit_price || ''}
                               onChange={(e) =>
-                                handleUpdateCustomPrice(item.product_variant_id, e.target.value)
+                                handleUpdateCustomPrice(item.cart_item_id, e.target.value)
                               }
                               placeholder="Price"
                               className="w-20 px-2 py-1 border border-amber-400 bg-amber-50 rounded text-xs font-bold text-slate-900 text-right focus:outline-none focus:ring-2 focus:ring-amber-500"
@@ -903,20 +1295,68 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
             {cart.length > 0 && (
               <div className="pt-3 border-t border-slate-200 space-y-3">
                 <div>
-                  <label htmlFor="sale-discount" className="block text-xs font-bold text-slate-700 mb-1">
-                    Discount (₹)
-                  </label>
-                  <input
-                    id="sale-discount"
-                    type="number"
-                    min="0"
-                    max={grandTotal}
-                    step="0.01"
-                    value={discountInput}
-                    onChange={(e) => setDiscountInput(e.target.value)}
-                    onBlur={() => setDiscountInput(discountAmount.toFixed(2))}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label htmlFor="sale-discount" className="text-xs font-bold text-slate-700">
+                      Discount
+                    </label>
+                    <div className="inline-flex rounded-lg border border-slate-300 p-0.5 bg-slate-100 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDiscountType('FIXED');
+                          setDiscountInput('0');
+                        }}
+                        className={`px-2 py-0.5 rounded font-semibold transition-colors cursor-pointer ${
+                          discountType === 'FIXED'
+                            ? 'bg-brand-700 text-white shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        ₹ Fixed
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDiscountType('PERCENT');
+                          setDiscountInput('0');
+                        }}
+                        className={`px-2 py-0.5 rounded font-semibold transition-colors cursor-pointer ${
+                          discountType === 'PERCENT'
+                            ? 'bg-brand-700 text-white shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        % Percent
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-xs font-bold text-slate-500">
+                      {discountType === 'FIXED' ? '₹' : '%'}
+                    </span>
+                    <input
+                      id="sale-discount"
+                      type="number"
+                      min="0"
+                      max={discountType === 'PERCENT' ? 100 : grandTotal}
+                      step={discountType === 'PERCENT' ? '1' : '0.01'}
+                      placeholder={discountType === 'PERCENT' ? 'e.g. 10' : '0.00'}
+                      value={discountInput}
+                      onChange={(e) => setDiscountInput(e.target.value)}
+                      onBlur={() => {
+                        if (discountType === 'FIXED') {
+                          setDiscountInput(discountAmount.toFixed(2));
+                        }
+                      }}
+                      className="w-full pl-8 pr-3 py-2 border border-slate-300 rounded-lg text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                  </div>
+                  {discountType === 'PERCENT' && Number(discountInput) > 0 && (
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      {discountInput}% of ₹{grandTotal.toFixed(2)} = ₹{discountAmount.toFixed(2)} discount
+                    </p>
+                  )}
                 </div>
 
                 <div className="p-3 bg-brand-50 border border-brand-200 rounded-xl space-y-1.5">
@@ -925,8 +1365,10 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
                     <span>₹{grandTotal.toFixed(2)}</span>
                   </div>
                   <div className="flex items-center justify-between text-xs text-slate-700">
-                    <span>Discount</span>
-                    <span>-₹{discountAmount.toFixed(2)}</span>
+                    <span>
+                      Discount {discountType === 'PERCENT' && Number(discountInput) > 0 ? `(${discountInput}%)` : ''}
+                    </span>
+                    <span className="font-semibold text-rose-700">-₹{discountAmount.toFixed(2)}</span>
                   </div>
                   <div className="flex items-center justify-between pt-1 border-t border-brand-200">
                     <span className="text-sm font-bold text-brand-950">TOTAL</span>
@@ -1033,18 +1475,33 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
                   </div>
                 )}
 
-                {/* Optional Customer Name */}
-                <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">
-                    Customer Name <span className="text-slate-400 font-normal">(Optional)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={customerName}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    placeholder="e.g. Rahul Sharma"
-                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
+                {/* Optional Customer Details */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
+                      Customer Name <span className="text-slate-400 font-normal">(Optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={customerName}
+                      onChange={(e) => setCustomerName(e.target.value)}
+                      placeholder="e.g. Rahul Sharma"
+                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
+                      Phone Number <span className="text-slate-400 font-normal">(Optional)</span>
+                    </label>
+                    <input
+                      type="tel"
+                      value={customerPhone}
+                      onChange={(e) => setCustomerPhone(e.target.value)}
+                      placeholder="e.g. 9876543210"
+                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                  </div>
                 </div>
 
                 {/* Complete Sale Button */}
@@ -1277,6 +1734,345 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
       )}
 
       {/* ════════════════════════════════════════════════════════════ */}
+      {/* MODAL: CUSTOM WEIGHT SELECTION                               */}
+      {/* ════════════════════════════════════════════════════════════ */}
+      {weightModalProduct && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 animate-scaleUp">
+            <div className="bg-brand-900 px-6 py-4 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Scale className="w-5 h-5 text-amber-300" />
+                <div>
+                  <h3 className="font-bold text-base">Select Cake Weight</h3>
+                  <p className="text-xs text-brand-300">{weightModalProduct.name}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setWeightModalProduct(null)}
+                className="text-brand-300 hover:text-white p-1 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {(() => {
+                const { rate, referenceVariant } = getPerKgRate(weightModalProduct);
+                const parsedWeight = parseFloat(customWeightInput) || 0;
+                const calcUnitPrice = Math.round(parsedWeight * rate * 100) / 100;
+                const calcLineTotal = Math.round(calcUnitPrice * (weightCakeQty || 1) * 100) / 100;
+                const availableStock = referenceVariant ? (stockByVariant.get(referenceVariant.id) || 0) : 0;
+                const weightOptions = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0];
+
+                return (
+                  <>
+                    <div className="flex items-center justify-between p-3 bg-brand-50 border border-brand-200 rounded-xl">
+                      <div>
+                        <span className="text-xs text-slate-600">Configured Rate</span>
+                        <p className="text-lg font-black text-brand-900">₹{rate} / kg</p>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-xs text-slate-600">Stock Available</span>
+                        <p className="text-xs font-bold text-slate-800">
+                          {isMainBranchSale ? 'Fresh Production' : `${availableStock} kg`}
+                        </p>
+                      </div>
+                    </div>
+
+                    {weightModalError && (
+                      <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700 flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                        <span>{weightModalError}</span>
+                      </div>
+                    )}
+
+                    {/* Quick Weight Chips */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                        Quick Weight Presets
+                      </label>
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {weightOptions.map((w) => (
+                          <button
+                            key={w}
+                            type="button"
+                            onClick={() => {
+                              setCustomWeightInput(String(w));
+                              setWeightModalError(null);
+                            }}
+                            className={`py-1.5 px-2 text-xs font-bold rounded-lg border transition-all cursor-pointer ${
+                              parseFloat(customWeightInput) === w
+                                ? 'bg-brand-900 text-white border-brand-900 shadow-sm'
+                                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            {w} kg
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Manual Weight Input */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Exact Weight (kg)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.05"
+                        min="0.1"
+                        value={customWeightInput}
+                        onChange={(e) => {
+                          setCustomWeightInput(e.target.value);
+                          setWeightModalError(null);
+                        }}
+                        placeholder="e.g. 1.75"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                    </div>
+
+                    {/* Quantity of Cakes */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Number of Cakes (Quantity)
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setWeightCakeQty((q) => Math.max(1, q - 1))}
+                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700 font-bold text-sm cursor-pointer"
+                        >
+                          -
+                        </button>
+                        <span className="px-4 py-1.5 font-bold text-sm text-slate-900 border border-slate-200 rounded-lg">
+                          {weightCakeQty}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setWeightCakeQty((q) => q + 1)}
+                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700 font-bold text-sm cursor-pointer"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Calculated Price Summary */}
+                    <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between">
+                      <div>
+                        <span className="text-xs text-amber-900 font-medium">
+                          {parsedWeight > 0 ? `${parsedWeight} kg @ ₹${rate}/kg` : 'Enter weight'}
+                          {weightCakeQty > 1 ? ` × ${weightCakeQty} cakes` : ''}
+                        </span>
+                        <p className="text-xs text-amber-700">Calculated Price</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xl font-black text-brand-950">₹{calcLineTotal.toFixed(2)}</p>
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                      <button
+                        type="button"
+                        onClick={() => setWeightModalProduct(null)}
+                        className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 rounded-lg cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAddCustomWeightToCart(weightModalProduct, parsedWeight, weightCakeQty)}
+                        disabled={parsedWeight <= 0}
+                        className="px-5 py-2 text-xs font-bold bg-brand-700 hover:bg-brand-800 text-white rounded-lg shadow-sm disabled:opacity-50 cursor-pointer"
+                      >
+                        Add to Cart (₹{calcLineTotal.toFixed(2)})
+                      </button>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ════════════════════════════════════════════════════════════ */}
+      {/* MODAL: CUSTOM CAKE ORDER FORM                                */}
+      {/* ════════════════════════════════════════════════════════════ */}
+      {showCustomCakeModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200 animate-scaleUp">
+            <div className="bg-brand-900 px-6 py-4 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Cake className="w-5 h-5 text-amber-300" />
+                <div>
+                  <h3 className="font-bold text-base">Custom Cake Order</h3>
+                  <p className="text-xs text-brand-300">Enter custom cake details and manual pricing</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCustomCakeModal(false)}
+                className="text-brand-300 hover:text-white p-1 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-3.5">
+              {customCakeError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{customCakeError}</span>
+                </div>
+              )}
+
+              {/* Description */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Cake Name or Description <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={customCakeDescription}
+                  onChange={(e) => setCustomCakeDescription(e.target.value)}
+                  placeholder="e.g. Custom Birthday Cake, 3D Car Theme Cake"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+
+              {/* Weight & Price Row */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Weight in kg <span className="text-slate-400 font-normal">(Optional)</span>
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    value={customCakeWeight}
+                    onChange={(e) => setCustomCakeWeight(e.target.value)}
+                    placeholder="e.g. 2.5"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Custom Price (₹) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="10"
+                    value={customCakePrice}
+                    onChange={(e) => setCustomCakePrice(e.target.value)}
+                    placeholder="e.g. 1800"
+                    className="w-full px-3 py-2 border border-amber-400 bg-amber-50/50 rounded-lg text-sm font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+              </div>
+
+              {/* Quantity */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Quantity
+                </label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCustomCakeQty((q) => Math.max(1, q - 1))}
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700 font-bold text-sm cursor-pointer"
+                  >
+                    -
+                  </button>
+                  <span className="px-4 py-1.5 font-bold text-sm text-slate-900 border border-slate-200 rounded-lg">
+                    {customCakeQty}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setCustomCakeQty((q) => q + 1)}
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700 font-bold text-sm cursor-pointer"
+                  >
+                    +
+                  </button>
+                  {Number(customCakePrice) > 0 && (
+                    <span className="ml-auto text-sm font-extrabold text-brand-900">
+                      Total: ₹{(Number(customCakePrice) * customCakeQty).toFixed(2)}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Optional Customer Name & Phone */}
+              <div className="grid grid-cols-2 gap-3 pt-1 border-t border-slate-100">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    Customer Name <span className="text-slate-400 font-normal">(Optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={customCakeCustomerName}
+                    onChange={(e) => setCustomCakeCustomerName(e.target.value)}
+                    placeholder="e.g. Rahul"
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    Customer Phone <span className="text-slate-400 font-normal">(Optional)</span>
+                  </label>
+                  <input
+                    type="tel"
+                    value={customCakeCustomerPhone}
+                    onChange={(e) => setCustomCakeCustomerPhone(e.target.value)}
+                    placeholder="e.g. 9876543210"
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
+              </div>
+
+              {/* Instructions */}
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Design Details / Instructions <span className="text-slate-400 font-normal">(Optional)</span>
+                </label>
+                <textarea
+                  rows={2}
+                  value={customCakeInstructions}
+                  onChange={(e) => setCustomCakeInstructions(e.target.value)}
+                  placeholder="e.g. Chocolate cake with customised birthday message."
+                  className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowCustomCakeModal(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 rounded-lg cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddCustomCakeToCart}
+                  className="px-5 py-2 text-xs font-bold bg-brand-700 hover:bg-brand-800 text-white rounded-lg shadow-sm cursor-pointer"
+                >
+                  Add Custom Cake to Cart
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ════════════════════════════════════════════════════════════ */}
       {/* RECEIPT DETAILS MODAL                                        */}
       {/* ════════════════════════════════════════════════════════════ */}
       {(recentCompletedSale || selectedSaleDetail) && (
@@ -1331,6 +2127,11 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
                   <p className="font-bold text-slate-900">
                     {((recentCompletedSale || selectedSaleDetail)!).customer_name || 'Walk-in Customer'}
                   </p>
+                  {((recentCompletedSale || selectedSaleDetail)!).customer_phone && (
+                    <p className="text-[11px] text-slate-500">
+                      Phone: {((recentCompletedSale || selectedSaleDetail)!).customer_phone}
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -1379,13 +2180,26 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
                       {((recentCompletedSale || selectedSaleDetail)!).items.map((item, idx) => (
                         <tr key={idx}>
                           <td className="p-2">
-                            <span className="font-bold text-slate-900">{item.product_name}</span>
+                            <span className="font-bold text-slate-900">
+                              {item.custom_item_name || item.product_name}
+                            </span>
                             <div className="text-[10px] text-slate-500">
-                              {item.variant_name}
+                              {item.weight_kg ? (
+                                <span className="font-semibold text-brand-800">
+                                  {item.weight_kg} kg
+                                </span>
+                              ) : (
+                                item.variant_name
+                              )}
                               {item.batch_number && (
                                 <span className="ml-1 text-slate-400">({item.batch_number})</span>
                               )}
                             </div>
+                            {item.notes && !item.notes.startsWith('Weight:') && (
+                              <div className="text-[10px] text-slate-500 italic">
+                                {item.notes}
+                              </div>
+                            )}
                             {item.is_custom_price && (
                               <span className="inline-block mt-0.5 text-[9px] bg-amber-100 text-amber-900 font-semibold px-1 rounded">
                                 Custom Price {item.entered_by_name ? `by ${item.entered_by_name}` : ''}
@@ -1454,7 +2268,13 @@ export const SalesPage: React.FC<SalesPageProps> = ({ profile, assignedBranch })
 
                 {/* Optional Browser Print Fallback */}
                 <button
-                  onClick={() => window.print()}
+                  onClick={() => {
+                    document.body.classList.add('printing-receipt');
+                    window.print();
+                    setTimeout(() => {
+                      document.body.classList.remove('printing-receipt');
+                    }, 1000);
+                  }}
                   className="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold text-xs rounded-lg transition-colors flex items-center gap-1"
                   title="Fallback Browser Print"
                 >

@@ -7,6 +7,9 @@ export interface CreateSaleItemParam {
   unit_price: number;
   is_custom_price: boolean;
   notes?: string;
+  weight_kg?: number;
+  custom_item_name?: string;
+  deduct_qty?: number;
   // UI helper fields
   product_name?: string;
   variant_name?: string;
@@ -19,6 +22,7 @@ export interface CreateSaleParams {
   amount_cash?: number;
   amount_online?: number;
   customer_name?: string;
+  customer_phone?: string;
   notes?: string;
   performed_by?: string;
   order_id?: string;
@@ -64,7 +68,11 @@ export const salesService = {
     const amountCash = Number(params.amount_cash || 0);
     const amountOnline = Number(params.amount_online || 0);
     const customerName = params.customer_name?.trim() || null;
-    const notes = params.notes?.trim() || null;
+    const customerPhone = params.customer_phone?.trim() || null;
+    let notes = params.notes?.trim() || null;
+    if (customerPhone && (!notes || !notes.includes(customerPhone))) {
+      notes = notes ? `${notes} | Phone: ${customerPhone}` : `Phone: ${customerPhone}`;
+    }
     const userId = params.performed_by || null;
     const orderId = params.order_id || null;
     const items = params.items.map((i) => ({
@@ -73,6 +81,9 @@ export const salesService = {
       unit_price: i.unit_price,
       is_custom_price: Boolean(i.is_custom_price),
       notes: i.notes || null,
+      weight_kg: i.weight_kg != null ? Number(i.weight_kg) : null,
+      custom_item_name: i.custom_item_name || null,
+      deduct_qty: i.deduct_qty != null ? Number(i.deduct_qty) : null,
     }));
 
     // 2. Call Atomic Database RPC
@@ -136,9 +147,11 @@ export const salesService = {
         custom_price_entered_by: i.is_custom_price ? params.performed_by || null : null,
         custom_price_entered_at: i.is_custom_price ? new Date().toISOString() : null,
         notes: i.notes || null,
+        weight_kg: i.weight_kg != null ? Number(i.weight_kg) : null,
+        custom_item_name: i.custom_item_name || null,
         created_at: new Date().toISOString(),
-        product_name: i.product_name,
-        variant_name: i.variant_name,
+        product_name: i.custom_item_name || i.product_name || 'Item',
+        variant_name: i.weight_kg ? `${i.weight_kg} kg` : (i.variant_name || 'Standard'),
       })),
     };
   },
@@ -216,6 +229,7 @@ export const salesService = {
       amount_cash: Number(row.amount_cash),
       amount_online: Number(row.amount_online),
       customer_name: row.customer_name,
+      customer_phone: row.customer_phone || null,
       notes: row.notes,
       status: row.status,
       performed_by: row.performed_by,
@@ -236,9 +250,13 @@ export const salesService = {
         custom_price_entered_by: si.custom_price_entered_by,
         custom_price_entered_at: si.custom_price_entered_at,
         notes: si.notes,
+        weight_kg: si.weight_kg != null ? Number(si.weight_kg) : null,
+        custom_item_name: si.custom_item_name || null,
         created_at: si.created_at,
-        product_name: si.variant?.product?.name || 'Unknown Product',
-        variant_name: si.variant?.name || 'Standard',
+        product_name: si.custom_item_name || si.variant?.product?.name || 'Unknown Product',
+        variant_name: si.weight_kg
+          ? (si.custom_item_name ? `${si.weight_kg} kg` : `${si.weight_kg} kg`)
+          : (si.variant?.name || 'Standard'),
         batch_number: si.batch?.batch_number,
         entered_by_name: si.custom_enterer?.full_name,
       })),

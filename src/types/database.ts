@@ -218,6 +218,7 @@ export interface Sale {
   amount_cash: number;
   amount_online: number;
   customer_name: string | null;
+  customer_phone?: string | null;
   notes: string | null;
   status: SaleStatus;
   performed_by: string | null;
@@ -243,7 +244,28 @@ export interface SaleItem {
   custom_price_entered_by: string | null;
   custom_price_entered_at: string | null;
   notes: string | null;
+  weight_kg?: number | null;
+  custom_item_name?: string | null;
   created_at: string;
+}
+
+export type ExpensePaymentMethod = 'CASH' | 'ONLINE';
+
+export interface Expense {
+  id: string;
+  branch_id: string;
+  recorded_by: string;
+  amount: number;
+  reason: string;
+  category: string | null;
+  payment_method: ExpensePaymentMethod;
+  expense_date: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  // UI joined fields
+  branch_name?: string;
+  recorded_by_name?: string;
 }
 
 /**
